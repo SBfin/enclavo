@@ -28,7 +28,7 @@ export default function Home() {
             <div className="label mt-1">= 1M tokens / day</div>
           </div>
           <Link
-            href="/dashboard"
+            href="/dashboard/market"
             className="group inline-flex items-center gap-3 rounded-md bg-foreground px-6 py-3.5 text-[15px] font-medium text-background transition hover:bg-accent"
           >
             Enter market
