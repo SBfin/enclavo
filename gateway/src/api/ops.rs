@@ -7,6 +7,18 @@ pub async fn healthz() -> &'static str {
     "ok"
 }
 
+pub async fn status(State(state): State<Shared>) -> Json<serde_json::Value> {
+    let mut providers: Vec<_> = state.catalog.providers.keys().cloned().collect();
+    providers.sort();
+    Json(json!({
+        "mode": state.cfg.server.mode,
+        "providers": providers,
+        "routes": state.catalog.routes.len(),
+        "funding": if state.cfg.payments.networks.is_empty() { "operator_credit" } else { "x402" },
+        "attestation_verification": "not_implemented",
+    }))
+}
+
 pub async fn readyz(State(state): State<Shared>) -> impl IntoResponse {
     if state.shutdown.is_cancelled() {
         return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "status": "draining" })));

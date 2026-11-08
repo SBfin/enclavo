@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
+use anyhow::{Context, ensure};
 use serde::Deserialize;
 
 use crate::{config::Config, error::ApiError};
@@ -82,13 +83,11 @@ impl Catalog {
         let mut providers = HashMap::new();
         for p in &cfg.providers {
             let api_key = match &p.api_key_env {
-                Some(var) => match std::env::var(var) {
-                    Ok(key) => Some(key),
-                    Err(_) => {
-                        tracing::warn!(provider = %p.id, env = %var, "provider API key variable is not set");
-                        None
-                    }
-                },
+                Some(var) => {
+                    let key = std::env::var(var).with_context(|| format!("set {var} for provider {}", p.id))?;
+                    ensure!(!key.trim().is_empty(), "{var} is empty for provider {}", p.id);
+                    Some(key)
+                }
                 None => None,
             };
             providers.insert(

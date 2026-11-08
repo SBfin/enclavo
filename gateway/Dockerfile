@@ -11,6 +11,7 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs \
 
 COPY migrations migrations
 COPY src src
+COPY deploy deploy
 RUN touch src/main.rs src/lib.rs && cargo build --release --locked
 
 # Local stand-in for providers and the facilitator (docker compose only; never deployed).
@@ -28,6 +29,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --no-create-home enclavo
 COPY --from=build /src/target/release/enclavo-gateway /usr/local/bin/enclavo-gateway
+COPY --from=build /src/target/release/enclavo-admin /usr/local/bin/enclavo-admin
 COPY deploy/*.toml /etc/enclavo/
 USER enclavo
 EXPOSE 8080 9091

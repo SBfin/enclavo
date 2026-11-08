@@ -1,5 +1,5 @@
-# Local Enclavo stack:
-#   docker compose up --build -d          dashboard + gateway + Postgres + mocks
+# Live Enclavo stack:
+#   docker compose up --build -d          dashboard + gateway + Postgres (requires NEAR_AI_API_KEY)
 #   gateway/scripts/smoke.sh               exercise every flow against it
 #   The dashboard needs Privy keys in .env (see .env.example).
 #   docker compose down -v                 stop and wipe the database
@@ -17,20 +17,12 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - live_pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U enclavo -d enclavo"]
       interval: 2s
       timeout: 3s
       retries: 20
-
-  # Fake providers (good / slow / broken) and a fake x402 facilitator that approves any payment.
-  mock:
-    build:
-      context: ./gateway
-      target: mock
-    ports:
-      - "4000:4000"
 
   gateway:
     build:
@@ -38,7 +30,7 @@ services:
       target: gateway
     environment:
       # Swap for /etc/enclavo/staging.toml-style configs to use real providers (keys from .env).
-      ENCLAVO_CONFIG: ${ENCLAVO_CONFIG:-/etc/enclavo/local.toml}
+      ENCLAVO_CONFIG: ${ENCLAVO_CONFIG:-near-ai}
       DATABASE_URL: postgres://enclavo:enclavo@postgres:5432/enclavo
       RUST_LOG: ${RUST_LOG:-info}
     env_file:
@@ -53,8 +45,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      mock:
-        condition: service_started
     # Matches the gateway's drain window in local.toml.
     stop_grace_period: 30s
 
@@ -65,6 +55,7 @@ services:
       # Bound native compiler parallelism to keep the local stack within Docker's memory budget.
       RAYON_NUM_THREADS: "2"
       TOKIO_WORKER_THREADS: "2"
+      ENCLAVO_GATEWAY_URL: http://gateway:8080
     working_dir: /app
     command: sh -c "npm ci && npm run dev -- -H 0.0.0.0 -p 3000"
     env_file:
@@ -84,6 +75,6 @@ services:
       retries: 6
 
 volumes:
-  pgdata:
+  live_pgdata:
   web_node_modules:
   web_next:

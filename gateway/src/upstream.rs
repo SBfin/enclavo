@@ -59,6 +59,7 @@ impl Upstream {
     fn body_for(route: &Route, body: &Value, completion_cap: u64, stream: bool) -> Value {
         let mut body = body.clone();
         let obj = body.as_object_mut().expect("validated as an object");
+        obj.remove("provider");
         obj.insert("model".into(), Value::String(route.upstream_model.clone()));
         // Hold the provider to the budget the payment ceiling was computed with.
         if obj.contains_key("max_completion_tokens") {
@@ -276,11 +277,13 @@ mod tests {
             max_output_tokens: 1,
             prompt_weight_bps: 10_000,
         };
-        let body = json!({ "model": "m", "messages": [], "max_completion_tokens": 9000, "max_tokens": 9000 });
+        let body = json!({ "model": "m", "messages": [], "max_completion_tokens": 9000, "max_tokens": 9000,
+            "provider": { "only": ["p"], "require_attestation": true } });
         let out = Upstream::body_for(&route, &body, 50, true);
         assert_eq!(out["model"], "org/m-fp8");
         assert_eq!(out["max_completion_tokens"], 50);
         assert!(out.get("max_tokens").is_none());
+        assert!(out.get("provider").is_none());
         assert_eq!(out["stream_options"]["include_usage"], true);
     }
 }

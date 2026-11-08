@@ -10,6 +10,32 @@ use serde_json::{Value, json};
 const LIVE_COST: i64 = 6_000;
 
 #[tokio::test]
+async fn operator_credit_pays_for_usage_without_fabricating_a_blockchain_payment() {
+    let app = common::spawn_with(|mut cfg| {
+        cfg.payments.networks.clear();
+        cfg
+    })
+    .await;
+    let (_, key) = enclavo_gateway::ledger::grant_operator_credit(&app.db, 1_000_000).await.unwrap();
+    let response = app.post("/v1/chat/completions").bearer_auth(&key).json(&chat("m")).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(app.account(&key).await["balance_micro_usd"], 1_000_000 - LIVE_COST);
+    assert!(app.facilitator.verified.lock().is_empty());
+    assert!(app.facilitator.settled.lock().is_empty());
+    let payments: i64 = sqlx::query_scalar("SELECT count(*) FROM payments").fetch_one(&app.db).await.unwrap();
+    assert_eq!(payments, 0);
+    let reference: String = sqlx::query_scalar("SELECT reference FROM ledger_entries WHERE kind = 'topup'")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert!(reference.starts_with("operator:grant:"));
+    assert!(enclavo_gateway::ledger::grant_operator_credit(&app.db, 0).await.is_err());
+    assert!(enclavo_gateway::ledger::grant_operator_credit(&app.db, u64::MAX).await.is_err());
+    let response = app.post("/v1/chat/completions").json(&chat("m")).send().await.unwrap();
+    assert_eq!(response.status(), 401);
+}
+
+#[tokio::test]
 async fn lists_routes_as_models() {
     let app = spawn().await;
     let body: Value = app.get("/v1/models").send().await.unwrap().json().await.unwrap();

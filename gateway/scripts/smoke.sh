@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs every gateway flow against a running local stack (`docker compose up --build -d` from the
+# Runs every gateway flow against an explicit test stack (`docker compose -f compose.yaml -f compose.test.yaml up --build -d` from the
 # repo root) and stops at the first thing that doesn't behave. Needs curl and jq.
 #
 #   gateway/scripts/smoke.sh                     # against http://localhost:8088

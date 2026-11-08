@@ -3,6 +3,7 @@
 # To use real providers, point routes at their base URLs and set the keys in ../.env.
 
 [server]
+mode = "test"
 listen = "0.0.0.0:8080"
 public_url = "http://localhost:8088"
 metrics_listen = "0.0.0.0:9091"

@@ -32,7 +32,8 @@ async fn main() -> anyhow::Result<()> {
         .or_else(|| std::env::var("ENCLAVO_CONFIG").ok())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("enclavo.toml"));
-    let cfg = Config::load(&path)?;
+    let cfg =
+        if path.to_str() == Some("near-ai") { enclavo_gateway::near::load().await? } else { Config::load(&path)? };
     if check_only {
         // Validates the file and the catalog without touching the database or the network.
         let catalog = Catalog::from_config(&cfg)?;

@@ -25,6 +25,8 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
+    #[serde(default)]
+    pub mode: RuntimeMode,
     pub listen: String,
     /// Base URL clients use to reach the gateway; it goes into x402 resource descriptions.
     pub public_url: String,
@@ -40,6 +42,14 @@ pub struct ServerConfig {
     /// On shutdown, how long to wait for open streams and running batch items to finish.
     #[serde(default = "default_drain_timeout")]
     pub drain_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeMode {
+    #[default]
+    Live,
+    Test,
 }
 
 #[derive(Debug, Clone, Deserialize)]

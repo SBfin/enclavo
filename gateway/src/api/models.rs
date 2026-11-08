@@ -24,6 +24,8 @@ pub async fn list(State(state): State<Shared>) -> Json<Value> {
                 "tokens_per_iu": r.tokens_per_iu,
                 "price_per_iu_usd": usd_per_iu,
                 "price_per_million_tokens_usd": usd_per_iu * 1e6 / r.tokens_per_iu as f64,
+                "input_price_per_million_tokens_usd": usd_per_iu * 1e6 / r.tokens_per_iu as f64 * r.prompt_weight_bps as f64 / 10_000.0,
+                "attestation_verification": "not_verified",
                 "max_output_tokens": r.max_output_tokens,
                 "available": state.router.circuit(&r.id) != CircuitState::Open,
             })

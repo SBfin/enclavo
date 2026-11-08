@@ -53,6 +53,16 @@ pub async fn create_account(conn: &mut PgConnection) -> sqlx::Result<(Uuid, Stri
     Ok((id, key))
 }
 
+/// Issue an explicitly operator-funded spending allowance, without inventing a payment receipt.
+pub async fn grant_operator_credit(pool: &PgPool, amount: u64) -> anyhow::Result<(Uuid, String)> {
+    anyhow::ensure!(amount > 0 && amount <= i64::MAX as u64, "credit must be positive and fit in micro-USD");
+    let mut tx = pool.begin().await?;
+    let (id, key) = create_account(&mut tx).await?;
+    credit(&mut tx, id, amount as i64, &format!("operator:grant:{}", Uuid::new_v4())).await?;
+    tx.commit().await?;
+    Ok((id, key))
+}
+
 pub async fn credit(conn: &mut PgConnection, account: Uuid, amount: i64, reference: &str) -> sqlx::Result<()> {
     sqlx::query("UPDATE accounts SET balance_micro = balance_micro + $2 WHERE id = $1")
         .bind(account)

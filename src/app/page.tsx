@@ -10,7 +10,7 @@ export default function Home() {
 
       <header className="relative z-10 flex items-center justify-between px-6 py-5 sm:px-10">
         <Wordmark />
-        <span className="label rounded-full border border-line px-3 py-1">NEAR testnet</span>
+        <span className="label rounded-full border border-line px-3 py-1">NEAR AI inference</span>
       </header>
 
       <section className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 text-center">
@@ -19,19 +19,19 @@ export default function Home() {
         </div>
         <h1 className="text-6xl font-light tracking-tight sm:text-8xl">enclavo</h1>
         <p className="mt-5 text-lg text-muted sm:text-xl">
-          Private inference, traded in <span className="text-foreground">one unit</span>.
+          Private models. <span className="text-foreground">One inference endpoint.</span>
         </p>
 
         <div className="mt-12 flex flex-col items-center gap-6 sm:flex-row sm:gap-10">
           <div className="text-left">
-            <div className="text-4xl font-medium tracking-tight tnum">1 IU</div>
-            <div className="label mt-1">= 1M tokens / day</div>
+            <div className="text-4xl font-medium tracking-tight">Pay per use</div>
+            <div className="label mt-1">metered in tokens</div>
           </div>
           <Link
-            href="/dashboard/market"
+            href="/dashboard/router"
             className="group inline-flex items-center gap-3 rounded-md bg-foreground px-6 py-3.5 text-[15px] font-medium text-background transition hover:bg-accent"
           >
-            Enter market
+            Start inference
             <span className="transition group-hover:translate-x-0.5" aria-hidden="true">
               →
             </span>
@@ -40,7 +40,7 @@ export default function Home() {
       </section>
 
       <footer className="relative z-10 flex justify-center px-6 pb-8">
-        <span className="label">attested · metered · settled onchain</span>
+        <span className="label">private models · metered usage · prepaid credit</span>
       </footer>
     </main>
   );

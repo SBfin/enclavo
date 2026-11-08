@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Enclavo",
-  description: "Private inference, traded in one unit.",
+  description: "Private models. One inference endpoint.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -1,0 +1,19 @@
+# Explicit test-only override. Never used by the default `docker compose up` command.
+services:
+  postgres:
+    volumes: !override
+      - test_pgdata:/var/lib/postgresql/data
+  mock:
+    build:
+      context: ./gateway
+      target: mock
+    ports:
+      - "4000:4000"
+  gateway:
+    environment:
+      ENCLAVO_CONFIG: /etc/enclavo/local.toml
+    depends_on:
+      mock:
+        condition: service_started
+volumes:
+  test_pgdata:

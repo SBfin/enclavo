@@ -7,6 +7,7 @@ pub mod devmock;
 pub mod error;
 pub mod ledger;
 pub mod limits;
+pub mod near;
 pub mod pricing;
 pub mod router;
 pub mod upstream;
@@ -107,6 +108,7 @@ pub fn app(state: Shared) -> HttpRouter {
         .layer(RequestBodyLimitLayer::new(max_file));
 
     let api = HttpRouter::new()
+        .route("/v1/status", get(api::ops::status))
         .route("/v1/models", get(api::models::list))
         .route("/v1/chat/completions", post(api::chat::completions))
         .route("/v1/credits/topup", post(api::account::top_up))
