@@ -1,0 +1,46 @@
+# Fly.io app for the Enclavo gateway (production). Deploy from gateway/: fly deploy -c fly.production.toml
+app = "enclavo-gateway"
+primary_region = "fra"
+
+# The gateway drains open streams and batch items on SIGTERM; give it Fly's maximum to do so.
+kill_signal = "SIGTERM"
+kill_timeout = 300
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  ENCLAVO_CONFIG = "/etc/enclavo/production.toml"
+  LOG_FORMAT = "json"
+  RUST_LOG = "info,enclavo_gateway=info"
+
+[deploy]
+  strategy = "rolling"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Machines run background work (batches, settlement retries), so they never auto-stop.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 2
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 400
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "15s"
+    method = "GET"
+    path = "/readyz"
+    timeout = "5s"
+
+[metrics]
+  port = 9091
+  path = "/metrics"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "1gb"

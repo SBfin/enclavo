@@ -1,0 +1,97 @@
+# Enclavo gateway for `docker compose up`: mock providers and a mock facilitator, so every flow
+# (paid requests, streaming, top-ups, batches, failover) runs with no keys and no wallet.
+# To use real providers, point routes at their base URLs and set the keys in ../.env.
+
+[server]
+listen = "0.0.0.0:8080"
+public_url = "http://localhost:8088"
+metrics_listen = "0.0.0.0:9091"
+drain_timeout_secs = 20
+
+[database]
+url_env = "DATABASE_URL"
+max_connections = 10
+
+[pricing]
+markup_bps = 0
+default_max_tokens = 1024
+
+[router]
+max_attempts = 3
+first_byte_timeout_secs = 10
+failure_threshold = 3
+cooldown_secs = 15
+
+[limits]
+per_key_rps = 50
+per_key_burst = 100
+per_ip_rps = 50
+per_ip_burst = 100
+
+[batch]
+discount_bps = 3000
+poll_interval_ms = 200
+
+[payments]
+facilitator_url = "http://mock:4000/facilitator"
+facilitator_auth = "none"
+service_name = "Enclavo (local)"
+min_topup_micro = 1000000
+max_topup_micro = 100000000
+
+[[payments.networks]]
+network = "eip155:84532"
+asset = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+pay_to = "0x1111111111111111111111111111111111111111"
+schemes = ["upto", "exact"]
+extra = { name = "USDC", version = "2" }
+
+# Three mock "providers" on the same mock server, differing only in behavior.
+[[providers]]
+id = "mock-down"
+base_url = "http://mock:4000/broken"
+
+[[providers]]
+id = "mock-fast"
+base_url = "http://mock:4000/good"
+
+[[providers]]
+id = "mock-slow"
+base_url = "http://mock:4000/slow"
+
+# glm-5.3-flash: the cheapest route is down, so requests visibly fail over to mock-fast.
+[[routes]]
+id = "glm-5.3-flash@mock-down"
+model = "glm-5.3-flash"
+display_name = "GLM 5.3 Flash"
+provider = "mock-down"
+upstream_model = "zai-org/GLM-5.3-Flash"
+attestation = "Mock TEE"
+attested = true
+score = 42
+tokens_per_iu = 1000000
+micro_usd_per_iu = 150000
+
+[[routes]]
+id = "glm-5.3-flash@mock-fast"
+model = "glm-5.3-flash"
+display_name = "GLM 5.3 Flash"
+provider = "mock-fast"
+upstream_model = "zai-org/GLM-5.3-Flash"
+attestation = "Mock TEE"
+attested = true
+score = 42
+tokens_per_iu = 1000000
+micro_usd_per_iu = 185000
+
+[[routes]]
+id = "glm-5.3-max@mock-slow"
+model = "glm-5.3-max"
+display_name = "GLM 5.3 (max)"
+provider = "mock-slow"
+upstream_model = "zai-org/GLM-5.3"
+attestation = "Mock TEE"
+attested = true
+score = 45
+tokens_per_iu = 455229
+micro_usd_per_iu = 978000

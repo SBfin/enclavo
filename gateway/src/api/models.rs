@@ -1,0 +1,40 @@
+use axum::{Json, extract::State};
+use serde_json::{Value, json};
+
+use crate::{Shared, catalog::AUTO_MODEL, router::CircuitState};
+
+/// OpenAI-style model list. Every route is addressable as its own model id.
+pub async fn list(State(state): State<Shared>) -> Json<Value> {
+    let mut data: Vec<Value> = state
+        .catalog
+        .routes
+        .iter()
+        .map(|r| {
+            let usd_per_iu = r.micro_usd_per_iu as f64 / 1e6;
+            json!({
+                "id": r.id,
+                "object": "model",
+                "created": 0,
+                "owned_by": r.provider.id,
+                "name": r.display_name,
+                "model": r.model,
+                "attestation": r.attestation,
+                "attested": r.attested,
+                "score": r.score,
+                "tokens_per_iu": r.tokens_per_iu,
+                "price_per_iu_usd": usd_per_iu,
+                "price_per_million_tokens_usd": usd_per_iu * 1e6 / r.tokens_per_iu as f64,
+                "max_output_tokens": r.max_output_tokens,
+                "available": state.router.circuit(&r.id) != CircuitState::Open,
+            })
+        })
+        .collect();
+    data.push(json!({
+        "id": AUTO_MODEL,
+        "object": "model",
+        "created": 0,
+        "owned_by": "enclavo",
+        "name": "Best available route (use `iu:<score>` to set a minimum score)",
+    }));
+    Json(json!({ "object": "list", "data": data }))
+}
