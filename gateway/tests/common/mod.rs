@@ -353,7 +353,9 @@ pub async fn spawn_with(adjust: impl FnOnce(Config) -> Config) -> TestApp {
     let db = PgPool::connect(&fresh_database().await).await.unwrap();
     MIGRATOR.run(&db).await.unwrap();
     let facilitator = Arc::new(MockFacilitator::default());
-    let state = AppState::new(cfg, db.clone(), facilitator.clone(), None).unwrap();
+    let mut state = AppState::new(cfg, db.clone(), facilitator.clone(), None).unwrap();
+    Arc::get_mut(&mut state).unwrap().control_token_hash =
+        Some(enclavo_gateway::control::token_hash("test-control-token"));
     let addr = serve(app(state.clone())).await;
     TestApp {
         url: format!("http://{addr}"),

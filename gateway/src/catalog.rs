@@ -19,6 +19,8 @@ pub struct Provider {
 
 #[derive(Debug)]
 pub struct Route {
+    pub input_micro_usd_per_iu: Option<u64>,
+    pub metadata: serde_json::Value,
     pub id: String,
     pub model: String,
     pub display_name: String,
@@ -106,6 +108,8 @@ impl Catalog {
             .iter()
             .map(|r| {
                 Arc::new(Route {
+                    input_micro_usd_per_iu: r.input_micro_usd_per_iu,
+                    metadata: r.metadata.clone(),
                     id: r.id.clone(),
                     model: r.model.clone(),
                     display_name: r.display_name.clone(),
@@ -194,6 +198,8 @@ mod tests {
 
     fn route(id: &str, model: &str, provider: &str, price: u64, score: u32, attested: bool) -> Arc<Route> {
         Arc::new(Route {
+            input_micro_usd_per_iu: None,
+            metadata: serde_json::Value::Null,
             id: id.into(),
             model: model.into(),
             display_name: model.into(),

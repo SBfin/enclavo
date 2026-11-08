@@ -24,7 +24,10 @@ pub async fn load() -> anyhow::Result<Config> {
         .context("fetching the NEAR AI model catalog")?
         .json()
         .await?;
-    config_from_catalog(&catalog, &model)
+    let selected = std::env::var("NEAR_AI_MODELS")
+        .ok()
+        .map(|s| s.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect::<Vec<_>>());
+    config_all_from_catalog(&catalog, &model, selected.as_deref())
 }
 
 pub fn config_from_catalog(catalog: &Value, model_id: &str) -> anyhow::Result<Config> {
@@ -43,6 +46,12 @@ pub fn config_from_catalog(catalog: &Value, model_id: &str) -> anyhow::Result<Co
         meta["architecture"]["outputModalities"].as_array().is_some_and(|a| a.iter().any(|v| v == "text")),
         "NEAR_AI_MODEL must be a text generation model"
     );
+    ensure!(
+        meta["architecture"]["inputModalities"].as_array().is_some_and(|a| a.iter().any(|v| v == "text"))
+            && meta["supportedFeatures"].as_array().is_some_and(|a| !a.is_empty())
+            && model["textPricing"].is_null(),
+        "Selected model is not a supported flat-priced chat model"
+    );
     let input = price_per_million(&model["inputCostPerToken"])?;
     let output = price_per_million(&model["outputCostPerToken"])?;
     ensure!(output > 0, "NEAR AI output token price must be positive");
@@ -56,6 +65,7 @@ pub fn config_from_catalog(catalog: &Value, model_id: &str) -> anyhow::Result<Co
         timeout_secs: 180,
     }];
     cfg.routes = vec![RouteConfig {
+        input_micro_usd_per_iu: Some(input),
         id: format!("{model_id}@near-ai"),
         model: model_id.into(),
         display_name: meta["modelDisplayName"].as_str().unwrap_or(model_id).into(),
@@ -69,6 +79,7 @@ pub fn config_from_catalog(catalog: &Value, model_id: &str) -> anyhow::Result<Co
         micro_usd_per_iu: output,
         max_output_tokens: meta["maxOutputLength"].as_u64().unwrap_or(8192).min(8192),
         prompt_weight_bps: weight.try_into().context("NEAR AI input/output price ratio is too large")?,
+        metadata: meta.clone(),
     }];
     if let Ok(url) = std::env::var("ENCLAVO_PUBLIC_URL") {
         cfg.server.public_url = url;
@@ -80,6 +91,59 @@ pub fn config_from_catalog(catalog: &Value, model_id: &str) -> anyhow::Result<Co
         output_micro_per_million = output,
         "live NEAR AI model discovered; attestation proof verification is not enabled"
     );
+    Ok(cfg)
+}
+
+/// Load all supported confidential chat models; an optional allowlist limits exposure explicitly.
+pub fn config_all_from_catalog(
+    catalog: &Value,
+    preferred: &str,
+    selected: Option<&[String]>,
+) -> anyhow::Result<Config> {
+    let models = catalog["models"].as_array().context("NEAR AI returned no model catalog")?;
+    let ids: Vec<String> = match selected {
+        Some(ids) => {
+            ensure!(!ids.is_empty(), "NEAR_AI_MODELS cannot be empty");
+            ids.to_vec()
+        }
+        None => models
+            .iter()
+            .filter(|m| {
+                let meta = &m["metadata"];
+                meta["isReady"] != false
+                    && meta["verifiable"] == true
+                    && meta["attestationSupported"] == true
+                    && meta["architecture"]["inputModalities"].as_array().is_some_and(|a| a.iter().any(|v| v == "text"))
+                    && meta["architecture"]["outputModalities"]
+                        .as_array()
+                        .is_some_and(|a| a.iter().any(|v| v == "text"))
+                    && meta["supportedFeatures"].as_array().is_some_and(|a| !a.is_empty())
+                    && m["textPricing"].is_null()
+            })
+            .filter_map(|m| m["modelId"].as_str().map(str::to_owned))
+            .collect(),
+    };
+    let mut result: Option<Config> = None;
+    let mut seen = std::collections::HashSet::new();
+    for id in ids {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        match config_from_catalog(catalog, &id) {
+            Ok(cfg) => match &mut result {
+                Some(result) => result.routes.extend(cfg.routes),
+                None => result = Some(cfg),
+            },
+            Err(error) if selected.is_none() => {
+                tracing::warn!(model = id, %error, "skipping unsupported NEAR AI model")
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    let mut cfg = result.context("NEAR AI has no supported ready confidential chat models")?;
+    cfg.routes
+        .sort_by(|a, b| (a.model != preferred).cmp(&(b.model != preferred)).then(a.display_name.cmp(&b.display_name)));
+    cfg.validate()?;
     Ok(cfg)
 }
 
@@ -102,7 +166,7 @@ mod tests {
             "inputCostPerToken": {"amount": 80, "scale": 9, "currency": "USD"},
             "outputCostPerToken": {"amount": 500, "scale": 9, "currency": "USD"},
             "metadata": {"isReady": true, "verifiable": true, "attestationSupported": true,
-                "architecture": {"outputModalities": ["text"]}, "maxOutputLength": 65536}
+                "architecture": {"inputModalities": ["text"], "outputModalities": ["text"]}, "supportedFeatures": ["tools"], "maxOutputLength": 65536}
         }]})
     }
 
@@ -131,6 +195,36 @@ mod tests {
         let mut data = catalog();
         data["models"][0]["metadata"]["architecture"]["outputModalities"] = json!(["image"]);
         assert!(config_from_catalog(&data, DEFAULT_MODEL).is_err());
+    }
+
+    #[test]
+    fn discovers_multiple_chat_models_and_excludes_other_tasks_and_unready_models() {
+        let mut data = catalog();
+        let mut second = data["models"][0].clone();
+        second["modelId"] = "Qwen/Example".into();
+        second["metadata"]["modelDisplayName"] = "Qwen Example".into();
+        let mut embedding = second.clone();
+        embedding["modelId"] = "embedding".into();
+        embedding["metadata"]["architecture"]["outputModalities"] = json!(["embedding"]);
+        let mut reranker = second.clone();
+        reranker["modelId"] = "reranker".into();
+        reranker["metadata"]["supportedFeatures"] = Value::Null;
+        let mut unready = second.clone();
+        unready["modelId"] = "unready".into();
+        unready["metadata"]["isReady"] = false.into();
+        let mut external = second.clone();
+        external["modelId"] = "external".into();
+        external["metadata"]["verifiable"] = false.into();
+        data["models"].as_array_mut().unwrap().extend([second, embedding, reranker, unready, external]);
+        let cfg = config_all_from_catalog(&data, DEFAULT_MODEL, None).unwrap();
+        assert_eq!(cfg.routes.len(), 2);
+        assert_eq!(cfg.routes[0].model, DEFAULT_MODEL);
+        assert_eq!(cfg.routes[1].metadata["modelDisplayName"], "Qwen Example");
+        assert_eq!(
+            config_all_from_catalog(&data, DEFAULT_MODEL, Some(&["Qwen/Example".into()])).unwrap().routes.len(),
+            1
+        );
+        assert!(config_all_from_catalog(&data, DEFAULT_MODEL, Some(&[])).is_err());
     }
 
     #[test]

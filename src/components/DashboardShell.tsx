@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { usePrivy } from "@privy-io/react-auth";
+import { usePathname } from "next/navigation";
 import { Mark } from "@/components/Logo";
 import Sidebar from "@/components/Sidebar";
 
@@ -10,7 +11,8 @@ import Sidebar from "@/components/Sidebar";
 // and the page underneath is inert.
 export default function DashboardShell({ children }: { children: ReactNode }) {
   const { ready, authenticated, login } = usePrivy();
-  const locked = !ready || !authenticated;
+  const pathname = usePathname();
+  const locked = pathname !== "/dashboard/market" && (!ready || !authenticated);
 
   return (
     <div className="relative flex min-h-dvh flex-col md:flex-row">
@@ -26,7 +28,7 @@ export default function DashboardShell({ children }: { children: ReactNode }) {
               <span className="text-accent">
                 <Mark size={40} />
               </span>
-              <h1 className="text-3xl font-light tracking-tight">Sign in to enter the market</h1>
+              <h1 className="text-3xl font-light tracking-tight">Sign in to Enclavo</h1>
               <button
                 type="button"
                 onClick={login}

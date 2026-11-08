@@ -258,6 +258,8 @@ mod tests {
     #[test]
     fn body_is_rewritten_for_the_route() {
         let route = Route {
+            input_micro_usd_per_iu: None,
+            metadata: serde_json::Value::Null,
             id: "r".into(),
             model: "m".into(),
             display_name: "m".into(),

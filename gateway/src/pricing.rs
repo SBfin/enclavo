@@ -73,12 +73,26 @@ impl Pricing {
     /// Cost of `usage` on `route`, rounded up to the next micro-USD.
     pub fn cost(&self, route: &Route, usage: Usage, tier: Tier) -> u64 {
         // Scale everything by 10_000 (prompt weight bps) and divide once at the end.
-        let weighted =
-            usage.prompt_tokens as u128 * route.prompt_weight_bps as u128 + usage.completion_tokens as u128 * 10_000;
-        let mut numerator = weighted * route.micro_usd_per_iu as u128 * (10_000 + self.markup_bps as u128);
+        let numerator = (|| {
+            let input = match route.input_micro_usd_per_iu {
+                Some(price) => (usage.prompt_tokens as u128).checked_mul(price as u128)?.checked_mul(10_000)?,
+                None => (usage.prompt_tokens as u128)
+                    .checked_mul(route.prompt_weight_bps as u128)?
+                    .checked_mul(route.micro_usd_per_iu as u128)?,
+            };
+            let output =
+                (usage.completion_tokens as u128).checked_mul(10_000)?.checked_mul(route.micro_usd_per_iu as u128)?;
+            input.checked_add(output)?.checked_mul(10_000 + self.markup_bps as u128)
+        })();
+        let Some(mut numerator) = numerator else {
+            return u64::MAX;
+        };
         let mut denominator = route.tokens_per_iu as u128 * 10_000 * 10_000;
         if tier == Tier::Batch {
-            numerator *= 10_000 - self.batch_discount_bps as u128;
+            let Some(discounted) = numerator.checked_mul(10_000 - self.batch_discount_bps as u128) else {
+                return u64::MAX;
+            };
+            numerator = discounted;
             denominator *= 10_000;
         }
         u64::try_from(ceil_div(numerator, denominator)).unwrap_or(u64::MAX)
@@ -146,6 +160,8 @@ mod tests {
 
     fn route(price: u64, per_iu: u64, max_out: u64) -> Arc<Route> {
         Arc::new(Route {
+            input_micro_usd_per_iu: None,
+            metadata: serde_json::Value::Null,
             id: "r".into(),
             model: "m".into(),
             display_name: "m".into(),
@@ -181,6 +197,14 @@ mod tests {
         let one = Usage { prompt_tokens: 0, completion_tokens: 1, estimated: false };
         assert_eq!(pricing(0).cost(&r, one, Tier::Live), 1, "a single token still costs a micro-USD");
         assert_eq!(pricing(0).cost(&r, Usage::default(), Tier::Live), 0);
+    }
+
+    #[test]
+    fn separate_input_prices_are_exact_instead_of_rounded_to_a_ratio() {
+        let mut r = route(1_100_000, 1_000_000, 8192);
+        Arc::get_mut(&mut r).unwrap().input_micro_usd_per_iu = Some(170_000);
+        let usage = Usage { prompt_tokens: 1_000_000, completion_tokens: 0, estimated: false };
+        assert_eq!(pricing(0).cost(&r, usage, Tier::Live), 170_000);
     }
 
     #[test]

@@ -40,6 +40,10 @@ impl RateLimits {
         self.ips.retain_recent();
     }
 
+    pub fn check_customer(&self, user: &str) -> bool {
+        self.keys.check_key(&format!("customer:{user}")).is_ok()
+    }
+
     fn client_ip(&self, req: &Request) -> Option<IpAddr> {
         if let Some(header) = &self.client_ip_header {
             let from_proxy =

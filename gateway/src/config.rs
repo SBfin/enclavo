@@ -255,6 +255,10 @@ pub struct ProviderConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RouteConfig {
+    #[serde(default)]
+    pub input_micro_usd_per_iu: Option<u64>,
+    #[serde(default)]
+    pub metadata: Value,
     pub id: String,
     /// Model family name clients can ask for, e.g. `glm-5.3-flash`.
     pub model: String,

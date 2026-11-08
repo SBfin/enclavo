@@ -209,6 +209,8 @@ mod tests {
             timeout: Duration::from_secs(1),
         });
         let route = Arc::new(Route {
+            input_micro_usd_per_iu: None,
+            metadata: serde_json::Value::Null,
             id: "r".into(),
             model: "m".into(),
             display_name: "m".into(),

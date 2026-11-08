@@ -26,10 +26,14 @@ pub struct Account {
 }
 
 pub async fn account_by_key(pool: &PgPool, key: &str) -> sqlx::Result<Option<Account>> {
-    let row = sqlx::query("SELECT id, balance_micro, held_micro, created_at FROM accounts WHERE api_key_hash = $1")
-        .bind(hash_key(key))
-        .fetch_optional(pool)
-        .await?;
+    let row = sqlx::query(
+        "SELECT a.id, a.balance_micro, a.held_micro, a.created_at FROM accounts a
+        WHERE (a.api_key_hash = $1 AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.key_hash = $1))
+           OR EXISTS (SELECT 1 FROM api_keys k WHERE k.key_hash = $1 AND k.account_id = a.id AND k.revoked_at IS NULL)",
+    )
+    .bind(hash_key(key))
+    .fetch_optional(pool)
+    .await?;
     row.map(|r| {
         Ok(Account {
             id: r.try_get("id")?,
@@ -61,6 +65,15 @@ pub async fn grant_operator_credit(pool: &PgPool, amount: u64) -> anyhow::Result
     credit(&mut tx, id, amount as i64, &format!("operator:grant:{}", Uuid::new_v4())).await?;
     tx.commit().await?;
     Ok((id, key))
+}
+
+pub async fn grant_existing_credit(pool: &PgPool, account: Uuid, amount: u64) -> anyhow::Result<()> {
+    anyhow::ensure!(amount > 0 && amount <= i64::MAX as u64, "credit must be positive and fit in micro-USD");
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT id FROM accounts WHERE id=$1 FOR UPDATE").bind(account).fetch_one(&mut *tx).await?;
+    credit(&mut tx, account, amount as i64, &format!("operator:grant:{}", Uuid::new_v4())).await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 pub async fn credit(conn: &mut PgConnection, account: Uuid, amount: i64, reference: &str) -> sqlx::Result<()> {
@@ -199,6 +212,7 @@ pub async fn release_expired_holds(pool: &PgPool) -> sqlx::Result<u64> {
 }
 
 pub struct UsageRecord<'a> {
+    pub capacity_contract_id: Option<Uuid>,
     pub request_id: &'a str,
     pub account_id: Option<Uuid>,
     pub payment_id: Option<Uuid>,
@@ -213,8 +227,8 @@ pub struct UsageRecord<'a> {
 pub async fn record_usage(conn: &mut PgConnection, u: &UsageRecord<'_>) -> sqlx::Result<()> {
     sqlx::query(
         "INSERT INTO usage_events (request_id, account_id, payment_id, route_id, tier, prompt_tokens,
-                                   completion_tokens, usage_estimated, cost_micro)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                                   completion_tokens, usage_estimated, cost_micro, capacity_contract_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
     )
     .bind(u.request_id)
     .bind(u.account_id)
@@ -225,6 +239,7 @@ pub async fn record_usage(conn: &mut PgConnection, u: &UsageRecord<'_>) -> sqlx:
     .bind(u.completion_tokens as i64)
     .bind(u.estimated)
     .bind(u.cost_micro)
+    .bind(u.capacity_contract_id)
     .execute(conn)
     .await?;
     Ok(())

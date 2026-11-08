@@ -1,9 +1,3 @@
-import { userIdFrom } from "@/lib/privy-server";
-
-// Do not accept orders until a durable matching and fulfillment service exists.
-async function unavailable(request: Request) {
-  if (!(await userIdFrom(request))) return Response.json({ error: "Sign in to access capacity orders." }, { status: 401 });
-  return Response.json({ error: "Capacity auctions are not implemented. Use the inference router for prepaid requests." }, { status: 501 });
-}
-
-export { unavailable as GET, unavailable as POST };
+import { dashboardRequest } from "@/lib/dashboard-server";
+async function bids(request: Request) { return dashboardRequest(request, "market/bids"); }
+export { bids as GET, bids as POST };

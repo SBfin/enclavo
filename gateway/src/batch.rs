@@ -188,6 +188,7 @@ async fn run_item(state: &Shared, item: Item) -> sqlx::Result<()> {
             ledger::record_usage(
                 &mut tx,
                 &UsageRecord {
+                    capacity_contract_id: None,
                     request_id: &request_id,
                     account_id: Some(item.account_id),
                     payment_id: None,

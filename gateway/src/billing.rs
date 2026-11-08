@@ -24,6 +24,7 @@ use crate::{
 const REQUEST_HOLD_SECS: i64 = 30 * 60;
 
 pub enum Payer {
+    Capacity { account_id: Uuid, hold_id: Uuid },
     Account { account_id: Uuid, hold_id: Uuid },
     X402(Box<X402Charge>),
 }
@@ -131,9 +132,19 @@ pub async fn authorize(
     path: &str,
     ceiling_micro: u64,
 ) -> Result<Payer, ApiError> {
+    authorize_for_account(state, headers, path, ceiling_micro, account(state, headers).await?).await
+}
+
+pub async fn authorize_for_account(
+    state: &AppState,
+    headers: &HeaderMap,
+    path: &str,
+    ceiling_micro: u64,
+    account: Option<Account>,
+) -> Result<Payer, ApiError> {
     let payment = payment_header(headers)?;
     let mut low_balance = false;
-    if let Some(account) = account(state, headers).await? {
+    if let Some(account) = account {
         match ledger::hold(&state.db, account.id, ceiling_micro as i64, "request", REQUEST_HOLD_SECS).await? {
             Some(hold_id) => return Ok(Payer::Account { account_id: account.id, hold_id }),
             None => low_balance = true,
@@ -253,6 +264,9 @@ async fn mark_payment(state: &AppState, payment_id: Uuid, status: &str, error: &
 /// Never fails the request: problems are logged and left for the sweepers.
 pub async fn finalize(state: &AppState, payer: Payer, request_id: &str, charge: Option<Charge<'_>>) -> Receipt {
     let result = match payer {
+        Payer::Capacity { account_id, hold_id } => {
+            crate::market::finalize_capacity(state, account_id, hold_id, request_id, charge.as_ref()).await
+        }
         Payer::Account { account_id, hold_id } => {
             finalize_account(state, account_id, hold_id, request_id, charge).await
         }
@@ -323,6 +337,7 @@ fn usage_record<'a>(
     charged: i64,
 ) -> UsageRecord<'a> {
     UsageRecord {
+        capacity_contract_id: None,
         request_id,
         account_id,
         payment_id,

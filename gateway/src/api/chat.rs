@@ -32,17 +32,75 @@ const USAGE_DRAIN: Duration = Duration::from_secs(30);
 pub async fn completions(State(state): State<Shared>, headers: HeaderMap, bytes: Bytes) -> Result<Response, ApiError> {
     // Runs detached so a client that disconnects mid-request can't skip finalizing its payment.
     let tasks = state.tasks.clone();
-    tasks.spawn(handle(state, headers, bytes)).await.map_err(ApiError::internal)?
+    tasks.spawn(handle(state, headers, bytes, None)).await.map_err(ApiError::internal)?
 }
 
-async fn handle(state: Shared, headers: HeaderMap, bytes: Bytes) -> Result<Response, ApiError> {
+pub async fn completions_for_account(
+    state: Shared,
+    headers: HeaderMap,
+    bytes: Bytes,
+    account: crate::ledger::Account,
+) -> Result<Response, ApiError> {
+    let tasks = state.tasks.clone();
+    tasks.spawn(handle(state, headers, bytes, Some(account))).await.map_err(ApiError::internal)?
+}
+
+async fn handle(
+    state: Shared,
+    headers: HeaderMap,
+    bytes: Bytes,
+    account: Option<crate::ledger::Account>,
+) -> Result<Response, ApiError> {
     let request_id = super::request_id(&headers);
     let body: Value =
         serde_json::from_slice(&bytes).map_err(|e| ApiError::bad_request(format!("Invalid JSON body: {e}")))?;
-    let req = super::parse_chat(body)?;
-    let routes = state.catalog.candidates(&req.model, &req.prefs, |r| state.router.latency_ms(r))?;
+    let mut req = super::parse_chat(body)?;
+    let contract = req
+        .body
+        .as_object_mut()
+        .and_then(|o| o.remove("capacity_contract_id"))
+        .filter(|v| !v.is_null())
+        .map(|v| {
+            v.as_str()
+                .and_then(|s| s.parse::<uuid::Uuid>().ok())
+                .ok_or_else(|| ApiError::bad_request("capacity_contract_id must be a UUID."))
+        })
+        .transpose()?;
+    let mut routes = state.catalog.candidates(&req.model, &req.prefs, |r| state.router.latency_ms(r))?;
+    let mut customer = account;
+    if let Some(id) = contract {
+        let owned = match customer.take() {
+            Some(a) => a,
+            None => billing::require_account(&state, &headers).await?,
+        };
+        let route = crate::market::contract_route(&state, owned.id, id).await?;
+        routes.retain(|r| r.id == route);
+        if routes.is_empty() {
+            return Err(ApiError::bad_request("This model does not match the selected capacity contract."));
+        }
+        customer = Some(owned);
+    }
     let ceiling = state.pricing.ceiling(&routes, &req.body, Tier::Live);
-    let payer = billing::authorize(&state, &headers, PATH, ceiling.micro).await?;
+    let payer = if let Some(id) = contract {
+        let owner = customer.as_ref().unwrap();
+        let choices = req.body["n"].as_u64().unwrap_or(1);
+        let hold = crate::market::reserve_capacity(
+            &state,
+            owner.id,
+            id,
+            ceiling.prompt_bound,
+            ceiling.completion_caps[0].saturating_mul(choices),
+        )
+        .await?;
+        Payer::Capacity { account_id: owner.id, hold_id: hold }
+    } else {
+        match customer {
+            Some(account) => {
+                billing::authorize_for_account(&state, &headers, PATH, ceiling.micro, Some(account)).await?
+            }
+            None => billing::authorize(&state, &headers, PATH, ceiling.micro).await?,
+        }
+    };
     let live = state.router.live_request();
 
     if !req.stream {
@@ -69,6 +127,9 @@ async fn handle(state: Shared, headers: HeaderMap, bytes: Bytes) -> Result<Respo
         }
         let mut response = Json(body).into_response();
         route_headers(response.headers_mut(), &answer.route, Some(&receipt));
+        if let Some(id) = contract {
+            response.headers_mut().insert("x-enclavo-capacity-contract", id.to_string().parse().unwrap());
+        }
         return Ok(response);
     }
 
@@ -91,6 +152,9 @@ async fn handle(state: Shared, headers: HeaderMap, bytes: Bytes) -> Result<Respo
     };
     let mut response = Sse::new(events).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))).into_response();
     route_headers(response.headers_mut(), &route, None);
+    if let Some(id) = contract {
+        response.headers_mut().insert("x-enclavo-capacity-contract", id.to_string().parse().unwrap());
+    }
     Ok(response)
 }
 

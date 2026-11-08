@@ -81,7 +81,7 @@ pub async fn top_up(State(state): State<Shared>, headers: HeaderMap, bytes: Byte
 pub async fn show(State(state): State<Shared>, headers: HeaderMap) -> Result<Json<Value>, ApiError> {
     let account = billing::require_account(&state, &headers).await?;
     let (requests, spent): (i64, Option<i64>) =
-        sqlx::query_as("SELECT count(*), sum(cost_micro)::bigint FROM usage_events WHERE account_id = $1")
+        sqlx::query_as("SELECT (SELECT count(*) FROM usage_events WHERE account_id=$1), (SELECT -sum(amount_micro)::bigint FROM ledger_entries WHERE account_id=$1 AND kind='charge')")
             .bind(account.id)
             .fetch_one(&state.db)
             .await?;

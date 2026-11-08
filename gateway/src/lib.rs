@@ -3,10 +3,12 @@ pub mod batch;
 pub mod billing;
 pub mod catalog;
 pub mod config;
+pub mod control;
 pub mod devmock;
 pub mod error;
 pub mod ledger;
 pub mod limits;
+pub mod market;
 pub mod near;
 pub mod pricing;
 pub mod router;
@@ -45,6 +47,7 @@ use crate::{
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 pub struct AppState {
+    pub control_token_hash: Option<[u8; 32]>,
     pub cfg: Config,
     pub catalog: Catalog,
     pub router: Arc<Router>,
@@ -73,6 +76,7 @@ impl AppState {
         let catalog = Catalog::from_config(&cfg)?;
         let router = Arc::new(Router::new(cfg.router.clone(), &catalog));
         Ok(Arc::new(Self {
+            control_token_hash: control::configured_token_hash(),
             pricing: Pricing::new(&cfg.pricing, cfg.batch.discount_bps),
             payments: Payments::new(cfg.payments.clone(), &cfg.server.public_url),
             limits: RateLimits::new(&cfg.limits, cfg.server.client_ip_header.clone()),
@@ -110,9 +114,11 @@ pub fn app(state: Shared) -> HttpRouter {
     let api = HttpRouter::new()
         .route("/v1/status", get(api::ops::status))
         .route("/v1/models", get(api::models::list))
+        .route("/v1/market/auctions", get(market::auctions))
         .route("/v1/chat/completions", post(api::chat::completions))
         .route("/v1/credits/topup", post(api::account::top_up))
         .route("/v1/account", get(api::account::show))
+        .route("/v1/contracts", get(market::api_contracts))
         .route("/v1/files/{id}", get(api::files::retrieve))
         .route("/v1/files/{id}/content", get(api::files::content))
         .route("/v1/batches", post(api::batches::create).get(api::batches::list))
@@ -122,7 +128,7 @@ pub fn app(state: Shared) -> HttpRouter {
         .merge(files)
         .layer(middleware::from_fn_with_state(state.clone(), limits::middleware));
 
-    let mut public = HttpRouter::new().merge(api);
+    let mut public = HttpRouter::new().merge(api).merge(control::routes().layer(DefaultBodyLimit::max(max_body)));
     if state.cfg.server.metrics_listen.is_none() {
         public = public.route("/metrics", get(api::ops::metrics));
     }
@@ -151,6 +157,12 @@ pub fn spawn_background(state: Shared) -> Vec<tokio::task::JoinHandle<()>> {
             }
             if let Err(err) = billing::retry_pending_settlements(&state).await {
                 tracing::error!(error = %err, "settlement retry pass failed");
+            }
+            if let Err(err) = market::clear_due(&state).await {
+                tracing::error!(error = %err, "auction clearing failed");
+            }
+            if let Err(err) = market::release_expired_capacity(&state).await {
+                tracing::error!(error = %err, "capacity hold recovery failed");
             }
             match ledger::release_expired_holds(&state.db).await {
                 Ok(0) => {}

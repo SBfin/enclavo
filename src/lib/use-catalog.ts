@@ -13,6 +13,13 @@ export type GatewayModel = {
   input_price_per_million_tokens_usd: number;
   price_per_million_tokens_usd: number;
   max_output_tokens: number;
+  description?: string;
+  context_length?: number;
+  supported_features?: string[];
+  input_modalities?: string[];
+  provider_type?: string;
+  tokens_per_iu: number;
+  price_per_iu_usd: number;
 };
 
 export type GatewayStatus = {
