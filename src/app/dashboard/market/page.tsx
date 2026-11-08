@@ -15,24 +15,29 @@ export default function MarketPage() {
   const { models, status, loading, error: catalogError } = useCatalog();
   const { auctions, bids, contracts, error: marketError, refresh } = useMarket();
   const [selection, setSelection] = useState("");
-  const [days, setDays] = useState(30);
+  const [termSelection, setDays] = useState<number | null>(null);
   const [units, setUnits] = useState(10);
   const [price, setPrice] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState("");
-  const [confirmBid, setConfirmBid] = useState(false);
+  const [confirmedQuote, setConfirmedQuote] = useState<string | null>(null);
   const submission = useRef<{ signature: string; id: string } | null>(null);
   const model = models.find((model) => model.id === selection) || models[0];
   const openAuctions = auctions.filter((auction) => auction.status === "open" && auction.accepting);
+  const modelAuctions = openAuctions.filter((auction) => auction.route_id === model?.id);
+  const days = termSelection ?? modelAuctions.find((auction) => auction.term_days === 30)?.term_days ?? modelAuctions[0]?.term_days ?? 30;
   const auction = openAuctions.filter((auction) => auction.route_id === model?.id && auction.term_days === days).sort((a,b) => a.ends_at.localeCompare(b.ends_at))[0];
   const effectivePrice = price || String((auction?.reserve_price_micro_usd ?? (model?.price_per_iu_usd || 0) * 1e6) / 1e6);
+  const quote = JSON.stringify([auction?.id, units, days, effectivePrice]);
+  const confirmBid = confirmedQuote === quote;
+  function setConfirmBid(value: boolean) { setConfirmedQuote(value ? quote : null); }
   const notional = units * days * Number(effectivePrice);
   const available = (account?.balance_micro_usd || 0) / 1e6;
   const sorted = useMemo(() => [...models].filter((model) => `${model.name} ${model.model}`.toLowerCase().includes(search.toLowerCase())).sort((a,b) => a.price_per_iu_usd-b.price_per_iu_usd), [models, search]);
   const activeContracts = contracts.filter((contract) => contract.active);
-  function select(id: string) { setSelection(id); setPrice(""); setConfirmBid(false); setNotice(null); setFailure(null); }
+  function select(id: string) { setSelection(id); setDays(null); setPrice(""); setConfirmBid(false); setNotice(null); setFailure(null); }
   async function placeBid() {
     if (!auction) return;
     setBusy(true); setFailure(null); setNotice(null);

@@ -217,8 +217,8 @@ pub async fn clear_due(state: &Shared) -> anyhow::Result<u64> {
                 let actual =
                     ledger::charge_from_hold(&mut tx, hold, charged, &format!("auction:{id}:bid:{bid_id}")).await?;
                 anyhow::ensure!(actual == charged, "Auction bid hold does not cover its fill");
-                sqlx::query("INSERT INTO capacity_contracts(id,auction_id,bid_id,account_id,route_id,units,tokens_per_iu,prompt_weight_bps,ends_at,paid_micro) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now()+make_interval(days=>$9),$10)")
-                    .bind(Uuid::new_v4()).bind(id).bind(bid_id).bind(bid.try_get::<Uuid,_>("account_id")?).bind(lot.try_get::<String,_>("route_id")?).bind(fill).bind(lot.try_get::<i64,_>("tokens_per_iu")?).bind(lot.try_get::<i32,_>("prompt_weight_bps")?).bind(lot.try_get::<i32,_>("term_days")?).bind(charged).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO capacity_contracts(id,auction_id,bid_id,account_id,route_id,units,tokens_per_iu,prompt_weight_bps,ends_at,paid_micro) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now()+make_interval(secs=>$9),$10)")
+                    .bind(Uuid::new_v4()).bind(id).bind(bid_id).bind(bid.try_get::<Uuid,_>("account_id")?).bind(lot.try_get::<String,_>("route_id")?).bind(fill).bind(lot.try_get::<i64,_>("tokens_per_iu")?).bind(lot.try_get::<i32,_>("prompt_weight_bps")?).bind(lot.try_get::<i32,_>("term_days")? as f64 * 86_400.0).bind(charged).execute(&mut *tx).await?;
             }
             let status = if fill == 0 {
                 "outbid"
