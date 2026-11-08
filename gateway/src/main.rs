@@ -22,6 +22,19 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // Fly release command: migrate before replacing the running service. No provider calls.
+    if args.as_slice() == ["--migrate"] {
+        let db = PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_secs(10))
+            .connect(&std::env::var("DATABASE_URL").context("DATABASE_URL is required")?)
+            .await
+            .context("connecting to Postgres for migrations")?;
+        MIGRATOR.run(&db).await.context("running migrations")?;
+        db.close().await;
+        tracing::info!("migrations complete");
+        return Ok(());
+    }
     let check_only = args.first().is_some_and(|a| a == "--check");
     if check_only {
         args.remove(0);
@@ -32,15 +45,26 @@ async fn main() -> anyhow::Result<()> {
         .or_else(|| std::env::var("ENCLAVO_CONFIG").ok())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("enclavo.toml"));
-    let cfg =
+    let mut cfg =
         if path.to_str() == Some("near-ai") { enclavo_gateway::near::load().await? } else { Config::load(&path)? };
+    if let Ok(addr) = std::env::var("ENCLAVO_LISTEN") {
+        cfg.server.listen = addr;
+    }
+    if let Ok(addr) = std::env::var("ENCLAVO_METRICS_LISTEN") {
+        cfg.server.metrics_listen = Some(addr);
+    }
+    if let Ok(url) = std::env::var("ENCLAVO_PUBLIC_URL") {
+        cfg.server.public_url = url;
+    }
+    if let Ok(seconds) = std::env::var("ENCLAVO_DRAIN_TIMEOUT_SECS") {
+        cfg.server.drain_timeout_secs = seconds.parse().context("ENCLAVO_DRAIN_TIMEOUT_SECS")?;
+    }
+    // Validate addresses before connecting to the database or starting background work.
+    let listen: SocketAddr = cfg.server.listen.parse().context("server.listen")?;
+    let metrics_listen = cfg.server.metrics_listen.as_deref().map(str::parse::<SocketAddr>).transpose()?;
     if check_only {
-        // Validates the file and the catalog without touching the database or the network.
+        // No database access. The near-ai preset still discovers the public provider catalog.
         let catalog = Catalog::from_config(&cfg)?;
-        cfg.server.listen.parse::<SocketAddr>().context("server.listen")?;
-        if let Some(addr) = &cfg.server.metrics_listen {
-            addr.parse::<SocketAddr>().context("server.metrics_listen")?;
-        }
         println!(
             "{}: ok ({} providers, {} routes, {} payment networks)",
             path.display(),
@@ -66,8 +90,6 @@ async fn main() -> anyhow::Result<()> {
     )?;
     let metrics = PrometheusBuilder::new().install_recorder().context("installing the metrics recorder")?;
 
-    let listen: SocketAddr = cfg.server.listen.parse().context("server.listen")?;
-    let metrics_listen = cfg.server.metrics_listen.as_deref().map(str::parse::<SocketAddr>).transpose()?;
     let drain_timeout = Duration::from_secs(cfg.server.drain_timeout_secs);
     let state = AppState::new(cfg, db, Arc::new(facilitator), Some(metrics))?;
     let background = spawn_background(state.clone());

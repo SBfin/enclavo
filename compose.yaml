@@ -49,7 +49,9 @@ services:
     stop_grace_period: 30s
 
   web:
-    build: .
+    build:
+      context: .
+      target: development
     cpus: 2
     environment:
       # Bound native compiler parallelism to keep the local stack within Docker's memory budget.

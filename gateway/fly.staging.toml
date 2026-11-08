@@ -1,45 +1,45 @@
-# Fly.io app for the Enclavo gateway (staging). Deploy from gateway/: fly deploy -c fly.staging.toml
+# Deploy from gateway/: fly deploy -c fly.staging.toml --ha=false --no-public-ips
+# Private worker/API: deliberately no http_service or services ports.
 app = "enclavo-gateway-staging"
 primary_region = "fra"
-
-# The gateway drains open streams and batch items on SIGTERM; give it Fly's maximum to do so.
 kill_signal = "SIGTERM"
 kill_timeout = 300
 
 [build]
   dockerfile = "Dockerfile"
+  build-target = "gateway"
 
 [env]
-  ENCLAVO_CONFIG = "/etc/enclavo/staging.toml"
+  ENCLAVO_CONFIG = "near-ai"
+  # Fly .internal DNS returns IPv6. Linux's wildcard IPv6 socket also accepts IPv4 probes.
+  ENCLAVO_LISTEN = "[::]:8080"
+  ENCLAVO_METRICS_LISTEN = "0.0.0.0:9091"
+  ENCLAVO_DRAIN_TIMEOUT_SECS = "280"
+  ENCLAVO_PUBLIC_URL = "https://enclavo-web-staging.fly.dev/api"
   LOG_FORMAT = "json"
   RUST_LOG = "info,enclavo_gateway=info"
 
 [deploy]
   strategy = "rolling"
+  # Docker ENTRYPOINT is enclavo-gateway, so this runs enclavo-gateway --migrate.
+  release_command = "--migrate"
 
-[http_service]
-  internal_port = 8080
-  force_https = true
-  # Machines run background work (batches, settlement retries), so they never auto-stop.
-  auto_stop_machines = "off"
-  auto_start_machines = true
-  min_machines_running = 1
-
-  [http_service.concurrency]
-    type = "requests"
-    soft_limit = 200
-    hard_limit = 400
-
-  [[http_service.checks]]
-    grace_period = "15s"
-    interval = "15s"
-    method = "GET"
-    path = "/readyz"
-    timeout = "5s"
+[checks.ready]
+  type = "http"
+  port = 8080
+  method = "GET"
+  path = "/readyz"
+  grace_period = "60s"
+  interval = "15s"
+  timeout = "5s"
 
 [metrics]
   port = 9091
   path = "/metrics"
+
+# No proxy service means no proxy autostop. Background auction/batch work must stay running.
+[[restart]]
+  policy = "always"
 
 [[vm]]
   size = "shared-cpu-1x"

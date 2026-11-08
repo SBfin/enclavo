@@ -105,7 +105,7 @@ redirects to Playground; `/` and `/dashboard` redirect to Market.
 npm run lint
 npx next typegen
 npx tsc --noEmit
-node --test tests/gateway-proxy.test.mjs
+node --test tests/*.test.mjs
 docker compose exec -T web npm run build
 TEST_DATABASE_ADMIN_URL=postgres://enclavo:enclavo@localhost:5433/postgres cargo test --manifest-path gateway/Cargo.toml --locked
 ```
@@ -127,13 +127,143 @@ Live and test modes use separate database volumes. The test override exposes moc
 `ENCLAVO_API_KEY` and must be run only with an approved budget. Set `BASE=http://localhost:3001/api`
 to include the frontend proxy. Smoke scripts need `curl` and `jq`.
 
+## Staging deployment on Fly.io
+
+Deploy two applications in Frankfurt (`fra`) and a separate managed PostgreSQL cluster in the
+same organization/region. The public Next.js application serves Market, Playground, API Keys and
+`/api/v1`. It reaches the Rust gateway over Fly's private IPv6 network; only the gateway holds
+the provider key and database credentials. NEAR AI runs the models; no GPU deployment is needed.
+The gateway stays running for auction clearing, batches and recovery. Its API, metrics and database
+have no public service ports. See [Fly private networking](https://fly.io/docs/networking/private-networking/)
+and [managed PostgreSQL](https://fly.io/mpg/).
+
+The templates are `fly.staging.toml` for web and `gateway/fly.staging.toml` for the gateway.
+`fly.production.toml` and its gateway counterpart use separate production app names. Start with
+staging; use a separate Privy app, provider credential, control token and database for production.
+These files provision nothing until deployment commands are run. Fly infrastructure and NEAR usage
+are billable; no auction is published and no customer credit is issued during deployment.
+
+### Rehearse the production images locally
+
+Set `STAGING_CONTROL_TOKEN` in `.env` to a new random value (`openssl rand -hex 32`), alongside
+the existing Privy and NEAR configuration. Add `http://localhost:3002` to the Privy app's allowed
+origins to exercise sign-in. Then run:
+
+```sh
+docker compose -f compose.staging.yaml up --build --wait --wait-timeout 180
+node scripts/check-staging.mjs http://localhost:3002
+```
+
+This starts the production standalone web image at `http://localhost:3002`, with no source mounts,
+runtime package installation or development server. Only web has a host port. The rehearsal uses
+its own `staging_pgdata` volume, never the development account ledger. Startup reads NEAR's public
+model catalog; the checks make no inference requests. To stop it while retaining data:
+
+```sh
+docker compose -f compose.staging.yaml down
+```
+
+### Configure and deploy staging
+
+1. Install [flyctl](https://fly.io/docs/flyctl/install/) and sign in with `fly auth login`.
+   Select the organization that will own billing. The following steps create paid resources.
+2. Choose globally unique web/gateway names. Update `app` in both staging manifests,
+   `ENCLAVO_GATEWAY_URL` in the web manifest, and `ENCLAVO_PUBLIC_URL` in the gateway manifest.
+   Use the resulting public HTTPS origin in the staging Privy app's allowed origins.
+3. Create the two apps and managed database. Replace names and `YOUR_ORG` below with your choices:
+
+```sh
+fly apps create enclavo-web-staging --org YOUR_ORG
+fly apps create enclavo-gateway-staging --org YOUR_ORG
+fly mpg create --org YOUR_ORG
+```
+
+Choose Frankfurt and the intended database plan in the prompt. Retrieve the database's **direct**
+TLS connection string from its connection settings. Set that as `DATABASE_URL` on the gateway.
+The automatic `fly mpg attach` URL is pooled; do not use a transaction-pooler connection here.
+SQLx migrations take session-level advisory locks, and both startup and the operator CLI run them.
+The application's own pool is capped at ten connections per gateway instance.
+
+Create two local secret files outside the repository, restrict them with `chmod 600`, and populate:
+
+| Variable | Web secret file | Gateway secret file |
+| --- | --- | --- |
+| `NEXT_PUBLIC_PRIVY_APP_ID` | Staging public app ID | — |
+| `PRIVY_APP_SECRET` | Staging Privy secret | — |
+| `ENCLAVO_CONTROL_TOKEN` | New random token | Same token |
+| `NEAR_AI_API_KEY` | — | Funded staging provider key |
+| `DATABASE_URL` | — | Direct managed PostgreSQL TLS URL |
+
+Use `KEY=value` format, without `export`. Import only the appropriate file into each app; do not
+upload the development `.env` wholesale. Importing with `--stage` avoids premature restarts:
+
+```sh
+fly secrets import --stage --app enclavo-web-staging < /secure/path/web.env
+fly secrets import --stage --app enclavo-gateway-staging < /secure/path/gateway.env
+fly config validate --strict -c fly.staging.toml
+```
+
+Deploy the gateway first, from its build directory:
+
+```sh
+cd gateway
+fly config validate --strict -c fly.staging.toml
+fly deploy -c fly.staging.toml --ha=false --no-public-ips
+cd ..
+fly deploy -c fly.staging.toml --ha=false --build-arg NEXT_PUBLIC_PRIVY_APP_ID=YOUR_STAGING_PRIVY_APP_ID
+```
+
+The public Privy app ID is required at **build time** and must match the web runtime configuration;
+changing it requires a rebuild. No secret belongs in build arguments. The gateway release command
+runs `enclavo-gateway --migrate` before replacing the service and stops deployment on failure.
+Startup also checks migrations. Use additive, backward-compatible migrations while old and new
+versions overlap. Both services run as non-root users; the gateway binds `[::]:8080` so private
+IPv6 requests and IPv4 health probes reach the same listener.
+
+Allocate public addresses **only for web** if they are not already present:
+
+```sh
+fly ips allocate-v6 --app enclavo-web-staging
+fly ips allocate-v4 --shared --app enclavo-web-staging
+fly checks list --app enclavo-gateway-staging
+fly checks list --app enclavo-web-staging
+node scripts/check-staging.mjs https://enclavo-web-staging.fly.dev
+```
+
+Do not add `http_service`, public service ports or public addresses to the gateway. Fly's top-level
+gateway checks report health but do not filter `.internal` DNS traffic. The web service's readiness
+probe checks the gateway's database readiness before accepting public traffic. This initial pilot
+uses one instance of each app; it does not promise uninterrupted deployments or machine failover.
+After changing names/domains, update all corresponding URLs and repeat the checks.
+
+### Verify and recover
+
+The read-only smoke command checks pages, assets, model discovery, readiness, public auctions and
+anonymous rejection of private account operations. Then verify Privy sign-in, create/copy/revoke a
+key, and confirm that the revoked key is rejected. Paid inference and actual auction publication
+are separate operator actions. Do not open paid bidding until the funded customer flow has passed.
+
+Keep the previous web/gateway image references from `fly releases --image` for rollback. Redeploy a
+known-good image with `fly deploy -c fly.staging.toml --image IMAGE_REFERENCE` from the matching
+directory. The web image retains its original public Privy app ID. Image rollback does not undo
+database migrations; restore data separately when needed.
+
+Before inviting customers, confirm managed backups and perform a restore drill into a **new**
+cluster using `fly mpg restore` (see [backup/restore commands](https://fly.io/docs/flyctl/mpg/)).
+Use `fly mpg connect` on the restored cluster and compare account balances, bids, contracts and
+usage with read-only queries. Do not start the normal gateway against a recovery copy: its workers
+resume batches and auction settlement automatically. Never overwrite the live ledger during a drill.
+Cloud backup recovery, DNS, private networking and live Privy sign-in require validation after
+actual provisioning. Platform-side `fly config validate --strict` also requires an authenticated
+Fly account; local manifest parsing is not a substitute for that check.
+
 ## Current limits
 
 The provider advertises TEE capabilities, but Enclavo does not yet verify hardware quotes, TLS
 bindings, or response signatures. It reports verification as unavailable. There are no invented
 benchmark scores or benchmark-normalized cross-model IU conversion; the capacity units are model-specific. Image-specific pricing and encrypted client-to-model transport are not implemented.
 The live preset uses operator-issued credit; public self-service deposits and real on-chain settlement
-are not enabled. Custom x402/deployment templates need separate funded-client validation.
+are not enabled. Custom x402 templates need separate funded-client validation.
 
 `docker compose down` stops services. Add `-v` only to erase data and dependency volumes. Older `pgdata`
 volumes are retained but are not used by the separated live/test modes.
