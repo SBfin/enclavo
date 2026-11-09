@@ -1,0 +1,176 @@
+# Enclavo gateway, staging. Baked into the image at /etc/enclavo/staging.toml and selected with
+# ENCLAVO_CONFIG in fly.staging.toml. Secrets come from `fly secrets`, never from this file.
+# Check it locally with: cargo run -- --check deploy/staging.toml
+
+[server]
+listen = "0.0.0.0:8080"
+public_url = "https://enclavo-gateway-staging.fly.dev"
+max_body_bytes = 10485760
+client_ip_header = "fly-client-ip"   # set by Fly's proxy; clients can't forge it
+metrics_listen = "[::]:9091"         # scraped by Fly over the private network
+drain_timeout_secs = 280             # under Fly's 300s kill_timeout
+
+[database]
+url_env = "DATABASE_URL"
+max_connections = 20
+
+[pricing]
+markup_bps = 0
+default_max_tokens = 4096
+
+[router]
+max_attempts = 3
+first_byte_timeout_secs = 30
+failure_threshold = 3
+cooldown_secs = 10
+max_cooldown_secs = 300
+
+[limits]
+per_key_rps = 20
+per_key_burst = 40
+per_ip_rps = 10
+per_ip_burst = 20
+
+[batch]
+enabled = true
+discount_bps = 3000
+max_concurrency = 8
+live_busy_threshold = 64
+
+[payments]
+# Public testnet facilitator: no account needed, testnets only. To rehearse production's path,
+# switch to CDP (it serves Base Sepolia too):
+#   facilitator_url = "https://api.cdp.coinbase.com/platform/v2/x402"
+#   facilitator_auth = "cdp"
+facilitator_url = "https://x402.org/facilitator"
+facilitator_auth = "none"
+service_name = "Enclavo"
+max_timeout_secs = 300
+min_topup_micro = 1000000
+max_topup_micro = 100000000
+
+# Base Sepolia test USDC.
+[[payments.networks]]
+network = "eip155:84532"
+asset = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+pay_to = "REPLACE_WITH_STAGING_RECEIVING_ADDRESS"
+asset_decimals = 6
+schemes = ["upto", "exact"]
+extra = { name = "USDC", version = "2" }
+
+[[providers]]
+id = "near-ai"
+base_url = "https://cloud-api.near.ai/v1"
+api_key_env = "NEAR_AI_API_KEY"
+max_concurrency = 64
+
+[[providers]]
+id = "redpill"
+base_url = "https://api.redpill.ai/v1"
+api_key_env = "REDPILL_API_KEY"
+max_concurrency = 32          # default workspace limit is 300 requests/min
+
+[[providers]]
+id = "venice"
+base_url = "https://api.venice.ai/api/v1"
+api_key_env = "VENICE_API_KEY"
+max_concurrency = 32
+
+# Routes mirror src/lib/market.ts. Check each provider's /v1/models for exact upstream ids.
+# micro_usd_per_iu is the price of 1 IU in micro-USD; tokens_per_iu converts the model to IU.
+
+[[routes]]
+id = "glm-5.3-flash@near-ai"
+model = "glm-5.3-flash"
+display_name = "GLM 5.3 Flash"
+provider = "near-ai"
+upstream_model = "zai-org/GLM-5.3-Flash"
+attestation = "Own TEE"
+attested = true
+score = 42
+tokens_per_iu = 1000000
+micro_usd_per_iu = 185000
+
+[[routes]]
+id = "deepseek-v4.1-flash-1017@redpill"
+model = "deepseek-v4.1-flash-1017"
+display_name = "DeepSeek V4.1 Flash 1017"
+provider = "redpill"
+upstream_model = "phala/deepseek-v4.1-flash-1017"
+attestation = "Tinfoil TEE"
+attested = true
+score = 45
+tokens_per_iu = 241149
+micro_usd_per_iu = 232000
+
+[[routes]]
+id = "glm-5.3-flash@redpill"
+model = "glm-5.3-flash"
+display_name = "GLM 5.3 Flash"
+provider = "redpill"
+upstream_model = "phala/glm-5.3-flash"
+attestation = "Partner TEE"
+attested = true
+score = 42
+tokens_per_iu = 1000000
+micro_usd_per_iu = 237500
+
+[[routes]]
+id = "glm-5.3-flash@venice"
+model = "glm-5.3-flash"
+display_name = "GLM 5.3 Flash"
+provider = "venice"
+upstream_model = "e2ee-glm-5.3-flash"
+attestation = "TEE + E2EE"
+attested = true
+score = 42
+tokens_per_iu = 1000000
+micro_usd_per_iu = 255000
+
+[[routes]]
+id = "glm-5.3-max@redpill"
+model = "glm-5.3-max"
+display_name = "GLM 5.3 (max)"
+provider = "redpill"
+upstream_model = "phala/glm-5.3"
+attestation = "Tinfoil TEE"
+attested = true
+score = 45
+tokens_per_iu = 455229
+micro_usd_per_iu = 978000
+
+[[routes]]
+id = "glm-5.3-max@venice"
+model = "glm-5.3-max"
+display_name = "GLM 5.3 (max)"
+provider = "venice"
+upstream_model = "tee-glm-5.3"
+attestation = "TEE + E2EE"
+attested = true
+score = 45
+tokens_per_iu = 455229
+micro_usd_per_iu = 1223000
+
+[[routes]]
+id = "qwen-3.8-27b@near-ai"
+model = "qwen-3.8-27b"
+display_name = "Qwen 3.8 27B"
+provider = "near-ai"
+upstream_model = "Qwen/Qwen3.8-27B"
+attestation = "Own TEE"
+attested = true
+score = 34
+tokens_per_iu = 3300000
+micro_usd_per_iu = 1231000
+
+[[routes]]
+id = "glm-5.3-max@near-ai"
+model = "glm-5.3-max"
+display_name = "GLM 5.3 (max)"
+provider = "near-ai"
+upstream_model = "zai-org/GLM-5.3"
+attestation = "Partner TEE"
+attested = true
+score = 45
+tokens_per_iu = 455229
+micro_usd_per_iu = 1268000

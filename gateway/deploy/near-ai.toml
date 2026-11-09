@@ -1,0 +1,27 @@
+# Loaded by the `near-ai` preset. Model IDs and prices are discovered from NEAR AI at startup.
+providers = []
+routes = []
+
+[server]
+listen = "0.0.0.0:8080"
+public_url = "http://localhost:8088"
+metrics_listen = "0.0.0.0:9091"
+drain_timeout_secs = 20
+mode = "live"
+
+[database]
+url_env = "DATABASE_URL"
+max_connections = 10
+
+[pricing]
+markup_bps = 0
+default_max_tokens = 1024
+
+[batch]
+# A gateway discount does not reduce the upstream bill. Do not subsidize requests implicitly.
+discount_bps = 0
+
+[payments]
+# Operator-funded prepaid accounts only; no simulated or unconfigured blockchain settlement.
+networks = []
+facilitator_url = "https://x402.org/facilitator"

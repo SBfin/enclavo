@@ -1,0 +1,82 @@
+# Live Enclavo stack:
+#   docker compose up --build -d          dashboard + gateway + Postgres (requires NEAR_AI_API_KEY)
+#   gateway/scripts/smoke.sh               exercise every flow against it
+#   The dashboard needs Privy keys in .env (see .env.example).
+#   docker compose down -v                 stop and wipe the database
+# Ports are offset from the defaults (8088, 5433, 3001) so they don't clash with local services.
+
+name: enclavo
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: enclavo
+      POSTGRES_PASSWORD: enclavo
+      POSTGRES_DB: enclavo
+    ports:
+      - "5433:5432"
+    volumes:
+      - live_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U enclavo -d enclavo"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  gateway:
+    build:
+      context: ./gateway
+      target: gateway
+    environment:
+      # Swap for /etc/enclavo/staging.toml-style configs to use real providers (keys from .env).
+      ENCLAVO_CONFIG: ${ENCLAVO_CONFIG:-near-ai}
+      DATABASE_URL: postgres://enclavo:enclavo@postgres:5432/enclavo
+      RUST_LOG: ${RUST_LOG:-info}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Config edits apply on `docker compose restart gateway`, no rebuild needed.
+      - ./gateway/deploy:/etc/enclavo:ro
+    ports:
+      - "8088:8080"
+      - "9091:9091"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Matches the gateway's drain window in local.toml.
+    stop_grace_period: 30s
+
+  web:
+    build:
+      context: .
+      target: development
+    cpus: 2
+    environment:
+      # Bound native compiler parallelism to keep the local stack within Docker's memory budget.
+      RAYON_NUM_THREADS: "2"
+      TOKIO_WORKER_THREADS: "2"
+      ENCLAVO_GATEWAY_URL: http://gateway:8080
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev -- -H 0.0.0.0 -p 3000"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./:/app
+      - web_node_modules:/app/node_modules
+      - web_next:/app/.next
+    ports:
+      - "3001:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 10s
+      start_period: 120s
+      retries: 6
+
+volumes:
+  live_pgdata:
+  web_node_modules:
+  web_next:

@@ -1,0 +1,46 @@
+# Deploy from gateway/: fly deploy -c fly.production.toml --ha=false --no-public-ips
+# Private worker/API: deliberately no http_service or services ports.
+app = "enclavo-gateway"
+primary_region = "fra"
+kill_signal = "SIGTERM"
+kill_timeout = 300
+
+[build]
+  dockerfile = "Dockerfile"
+  build-target = "gateway"
+
+[env]
+  ENCLAVO_CONFIG = "near-ai"
+  # Fly .internal DNS returns IPv6. Linux's wildcard IPv6 socket also accepts IPv4 probes.
+  ENCLAVO_LISTEN = "[::]:8080"
+  ENCLAVO_METRICS_LISTEN = "0.0.0.0:9091"
+  ENCLAVO_DRAIN_TIMEOUT_SECS = "280"
+  ENCLAVO_PUBLIC_URL = "https://enclavo-web.fly.dev/api"
+  LOG_FORMAT = "json"
+  RUST_LOG = "info,enclavo_gateway=info"
+
+[deploy]
+  strategy = "rolling"
+  # Docker ENTRYPOINT is enclavo-gateway, so this runs enclavo-gateway --migrate.
+  release_command = "--migrate"
+
+[checks.ready]
+  type = "http"
+  port = 8080
+  method = "GET"
+  path = "/readyz"
+  grace_period = "60s"
+  interval = "15s"
+  timeout = "5s"
+
+[metrics]
+  port = 9091
+  path = "/metrics"
+
+# No proxy service means no proxy autostop. Background auction/batch work must stay running.
+[[restart]]
+  policy = "always"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

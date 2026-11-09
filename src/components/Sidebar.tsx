@@ -6,14 +6,15 @@ import { usePrivy } from "@privy-io/react-auth";
 import { Wordmark } from "@/components/Logo";
 
 const NAV = [
-  { href: "/dashboard/router", label: "Router", icon: RouterIcon },
   { href: "/dashboard/market", label: "Market", icon: MarketIcon },
+  { href: "/dashboard/playground", label: "Playground", icon: RouterIcon },
+  { href: "/dashboard/api-keys", label: "API Keys", icon: KeyIcon },
   { href: "/dashboard/settings", label: "Settings", icon: SettingsIcon },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { authenticated, user, logout } = usePrivy();
+  const { authenticated, user, logout, login } = usePrivy();
   const identity = user?.email?.address ?? user?.google?.email ?? shortAddress(user?.wallet?.address) ?? "Signed in";
 
   return (
@@ -24,7 +25,7 @@ export default function Sidebar() {
         </Link>
       </div>
 
-      <nav aria-label="Dashboard" className="flex gap-1 px-3 pb-3 md:flex-1 md:flex-col md:pb-0">
+      <nav aria-label="Dashboard" className="flex gap-1 overflow-x-auto px-3 pb-3 md:overflow-visible md:flex-1 md:flex-col md:pb-0">
         {NAV.map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(`${href}/`);
           return (
@@ -37,11 +38,13 @@ export default function Sidebar() {
               }`}
             >
               <Icon />
-              {label}
+              <span className="whitespace-nowrap">{label}</span>
             </Link>
           );
         })}
       </nav>
+
+      {!authenticated && <button type="button" onClick={login} className="m-4 rounded-md bg-foreground px-4 py-2 text-sm text-background">Sign in</button>}
 
       <div className={`border-t border-line px-5 py-4 ${authenticated ? "hidden md:block" : "hidden"}`}>
         <div className="truncate text-sm" title={identity}>
@@ -53,6 +56,10 @@ export default function Sidebar() {
       </div>
     </aside>
   );
+}
+
+function KeyIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><circle cx="8" cy="8" r="4"/><path d="m11 11 9 9m-3-3 3-3m-6 0 3-3"/></svg>;
 }
 
 function shortAddress(address?: string) {

@@ -15,7 +15,7 @@ export default function Providers({ children }: { children: ReactNode }) {
         appearance: {
           theme: "dark",
           accentColor: "#C9D3FF",
-          landingHeader: "Enter the market",
+          landingHeader: "Sign in to Enclavo",
         },
         // NEAR is a Tier 2 chain in Privy, so no embedded EVM/Solana wallet is created on login.
         embeddedWallets: {
