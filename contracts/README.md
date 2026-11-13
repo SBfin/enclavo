@@ -72,8 +72,8 @@ have not been tried.
 
 Views: `key_hash_of`, `get_config`, `list_auctions`, `get_auction`, `get_bids`, `bids_of`, `balance_of`,
 `entitlements_of`, `list_entitlements`. Every state change emits an `EVENT_JSON` log
-(`auction_published`, `bid_placed`, `bid_cancelled`, `bid_outbid`, `auction_cleared`,
-`key_authorized`, `key_revoked`). Clearing emits one `auction_cleared` event that names the range of
+(`deposit`, `withdraw`, `withdraw_failed`, `auction_published`, `bid_placed`, `bid_cancelled`,
+`bid_outbid`, `auction_cleared`, `key_authorized`, `key_revoked`). Clearing emits one `auction_cleared` event that names the range of
 entitlement ids it created, so settling a full book stays inside NEAR's per-receipt log limits.
 
 An auction holds at most 100 open bids. When the book is full, a new bid must outprice the weakest

@@ -109,6 +109,17 @@ pub struct Entitlement {
     pub paid: U128,
 }
 
+/// What `get_config` returns.
+#[near(serializers = [json])]
+pub struct Config {
+    pub owner: AccountId,
+    pub token: AccountId,
+    pub max_open_bids: u32,
+    pub auctions: u32,
+    pub entitlements: u32,
+    pub total_liabilities: U128,
+}
+
 #[near(serializers = [json])]
 struct BidMsg {
     auction_id: u64,
@@ -121,7 +132,13 @@ pub trait FungibleToken {
     fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
 }
 
-#[near(contract_state)]
+#[near(
+    contract_state,
+    contract_metadata(
+        standard(standard = "nep141", version = "1.0.0"),
+        standard(standard = "nep297", version = "1.0.0")
+    )
+)]
 #[derive(PanicOnDefault)]
 pub struct Contract {
     /// Operator that publishes capacity and receives auction proceeds.
@@ -152,8 +169,13 @@ fn api_keys() -> LookupMap<AccountId, [u8; 32]> {
     LookupMap::new(Key::ApiKeys)
 }
 
+/// Position of a record in its vector. Ids past `u32` map to a slot that is never filled.
+fn slot(id: u64) -> u32 {
+    u32::try_from(id).unwrap_or(u32::MAX)
+}
+
 fn hex_32(value: &str) -> Option<[u8; 32]> {
-    if value.len() != 64 {
+    if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     let mut out = [0u8; 32];
@@ -244,6 +266,7 @@ impl Contract {
         require!(env::predecessor_account_id() == self.token, "Only the settlement token is accepted");
         self.credit(&sender_id, amount.0);
         self.total_liabilities += amount.0;
+        emit("deposit", json!({"account_id": sender_id, "amount": amount}));
         if !msg.trim().is_empty() {
             let bid: BidMsg =
                 serde_json::from_str(&msg).unwrap_or_else(|_| env::panic_str("msg must be empty or a bid JSON"));
@@ -261,7 +284,7 @@ impl Contract {
     pub fn cancel_bid(&mut self, auction_id: u64, index: u32) {
         let caller = env::predecessor_account_id();
         let now = env::block_timestamp_ms();
-        let auction = self.auctions.get_mut(auction_id as u32).unwrap_or_else(|| env::panic_str("Auction not found"));
+        let auction = self.auctions.get_mut(slot(auction_id)).unwrap_or_else(|| env::panic_str("Auction not found"));
         let book = self.bids.get_mut(&auction_id).unwrap();
         let bid = book.get_mut(index as usize).unwrap_or_else(|| env::panic_str("Bid not found"));
         require!(bid.bidder == caller, "Bid not found");
@@ -289,7 +312,7 @@ impl Contract {
     /// gets back whatever their escrow did not pay for, and proceeds go to the operator.
     pub fn clear_auction(&mut self, auction_id: u64) {
         let now = env::block_timestamp_ms();
-        let auction = self.auctions.get(auction_id as u32).unwrap_or_else(|| env::panic_str("Auction not found"));
+        let auction = self.auctions.get(slot(auction_id)).unwrap_or_else(|| env::panic_str("Auction not found"));
         require!(auction.status == AuctionStatus::Open, "Auction is already cleared");
         require!(now >= auction.ends_at_ms, "Auction is still accepting bids");
         let mut auction = auction.clone();
@@ -304,11 +327,9 @@ impl Contract {
         let mut marginal = reserve;
         let mut fills = Vec::with_capacity(order.len());
         for &i in &order {
-            let eligible = book[i].max_price.0 >= reserve;
-            if eligible {
-                demand += book[i].units as u128;
-            }
-            let fill = if eligible { remaining.min(book[i].units) } else { 0 };
+            // Every recorded bid is at or above the reserve; `internal_place_bid` enforces it.
+            demand += book[i].units as u128;
+            let fill = remaining.min(book[i].units);
             remaining -= fill;
             if fill > 0 {
                 marginal = book[i].max_price.0;
@@ -375,7 +396,7 @@ impl Contract {
                    "first_entitlement_id": first_entitlement,
                    "entitlements": self.entitlements.len() - first_entitlement}),
         );
-        self.auctions.replace(auction_id as u32, auction);
+        self.auctions.replace(slot(auction_id), auction);
         self.bids.insert(auction_id, book);
     }
 
@@ -406,10 +427,12 @@ impl Contract {
         #[callback_result] result: Result<(), PromiseError>,
     ) -> U128 {
         if result.is_ok() {
+            emit("withdraw", json!({"account_id": account, "amount": amount}));
             return amount;
         }
         self.credit(&account, amount.0);
         self.total_liabilities += amount.0;
+        emit("withdraw_failed", json!({"account_id": account, "amount": amount}));
         U128(0)
     }
 
@@ -439,10 +462,15 @@ impl Contract {
         api_keys().get(&account_id).map(|hash| hash.iter().map(|b| format!("{b:02x}")).collect())
     }
 
-    pub fn get_config(&self) -> Value {
-        json!({"owner": self.owner, "token": self.token, "max_open_bids": MAX_OPEN_BIDS,
-               "auctions": self.auctions.len(), "entitlements": self.entitlements.len(),
-               "total_liabilities": U128(self.total_liabilities)})
+    pub fn get_config(&self) -> Config {
+        Config {
+            owner: self.owner.clone(),
+            token: self.token.clone(),
+            max_open_bids: MAX_OPEN_BIDS,
+            auctions: self.auctions.len(),
+            entitlements: self.entitlements.len(),
+            total_liabilities: U128(self.total_liabilities),
+        }
     }
 
     pub fn balance_of(&self, account_id: AccountId) -> U128 {
@@ -450,7 +478,7 @@ impl Contract {
     }
 
     pub fn get_auction(&self, auction_id: u64) -> Option<Auction> {
-        self.auctions.get(auction_id as u32).cloned()
+        self.auctions.get(slot(auction_id)).cloned()
     }
 
     /// Newest first.
@@ -474,7 +502,7 @@ impl Contract {
     }
 
     pub fn get_entitlement(&self, entitlement_id: u64) -> Option<Entitlement> {
-        self.entitlements.get(entitlement_id as u32).cloned()
+        self.entitlements.get(slot(entitlement_id)).cloned()
     }
 
     /// Newest first.
@@ -483,7 +511,7 @@ impl Contract {
         ids.iter()
             .rev()
             .take(limit.unwrap_or(50).min(100) as usize)
-            .map(|id| self.entitlements.get(*id as u32).unwrap().clone())
+            .map(|id| self.entitlements.get(slot(*id)).unwrap().clone())
             .collect()
     }
 
@@ -504,7 +532,7 @@ impl Contract {
 
     fn internal_place_bid(&mut self, bidder: AccountId, auction_id: u64, units: u64, max_price: u128) -> u32 {
         let now = env::block_timestamp_ms();
-        let auction = self.auctions.get_mut(auction_id as u32).unwrap_or_else(|| env::panic_str("Auction not found"));
+        let auction = self.auctions.get_mut(slot(auction_id)).unwrap_or_else(|| env::panic_str("Auction not found"));
         require!(
             auction.status == AuctionStatus::Open && now < auction.ends_at_ms,
             "This auction is no longer accepting bids"

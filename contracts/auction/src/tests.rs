@@ -533,10 +533,12 @@ fn revoking_without_a_key_does_nothing() {
 fn config_reports_counts_and_liabilities() {
     let mut c = setup(10);
     bid(&mut c, "alice.near", 2, USD, 10);
-    let config = c.get_config();
-    assert_eq!((config["owner"].as_str(), config["token"].as_str()), (Some("operator.near"), Some("usdc.near")));
-    assert_eq!((config["auctions"].as_u64(), config["entitlements"].as_u64()), (Some(1), Some(0)));
-    assert_eq!(config["total_liabilities"], (14 * USD).to_string());
+    let config = serde_json::to_value(c.get_config()).unwrap();
+    assert_eq!(
+        config,
+        json!({"owner": "operator.near", "token": "usdc.near", "max_open_bids": 100, "auctions": 1,
+               "entitlements": 0, "total_liabilities": "14000000"})
+    );
 }
 
 /// Small deterministic generator, so a failing round can be replayed from its number.
@@ -664,4 +666,35 @@ fn full_book_of_winners_clears_with_a_single_event() {
     assert!(logs[0].contains(r#""event":"auction_cleared""#) && logs[0].contains(r#""entitlements":100"#));
     assert_eq!(c.list_entitlements(None, Some(100)).len(), MAX_OPEN_BIDS as usize);
     assert_eq!(c.get_auction(0).unwrap().filled_units, MAX_OPEN_BIDS as u64);
+}
+
+#[test]
+fn ids_beyond_the_vector_range_find_nothing() {
+    let c = setup(10);
+    // 2^32 must not wrap around to auction 0.
+    assert!(c.get_auction(1 << 32).is_none());
+    assert!(c.get_entitlement(1 << 32).is_none());
+    assert!(c.get_bids(1 << 32).is_empty());
+}
+
+#[test]
+#[should_panic(expected = "64 hex characters")]
+fn signed_key_hash_is_rejected() {
+    let mut c = setup(10);
+    ctx("alice.near", 10);
+    c.authorize_key("+a".repeat(32));
+}
+
+#[test]
+fn deposits_and_withdrawals_emit_events() {
+    let mut c = setup(10);
+    fund(&mut c, "alice.near", 5 * USD, "", 10);
+    let logs = near_sdk::test_utils::get_logs();
+    assert!(logs[0].contains(r#""event":"deposit""#) && logs[0].contains(r#""amount":"5000000""#));
+    ctx("alice.near", 20);
+    let _ = c.withdraw(None);
+    c.on_withdraw(acc("alice.near"), U128(5 * USD), Err(PromiseError::Failed));
+    c.on_withdraw(acc("alice.near"), U128(5 * USD), Ok(()));
+    let logs = near_sdk::test_utils::get_logs();
+    assert!(logs[0].contains(r#""event":"withdraw_failed""#) && logs[1].contains(r#""event":"withdraw""#));
 }
