@@ -1,0 +1,20 @@
+[package]
+name = "enclavo-auction"
+description = "Escrowed uniform-price capacity auctions for Enclavo inference units"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { workspace = true }
+
+[dev-dependencies]
+near-sdk = { workspace = true, features = ["unit-testing"] }
+near-workspaces = { version = "0.24", features = ["unstable"] }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+anyhow = "1"
