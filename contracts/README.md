@@ -44,7 +44,13 @@ It only makes view calls against finalized blocks, so it holds no chain key.
 3. Within about ten seconds the gateway accepts that key. `GET /v1/contracts` lists the wallet's
    entitlements, and a chat request with `capacity_contract_id` draws on one at no cash cost.
 
-`scripts/use-capacity.sh` runs these steps for a testnet buyer against a local gateway.
+The dashboard's **On-chain** page (`/dashboard/onchain`) does all of this from a NEAR wallet:
+connect, get test mUSDC, bid, cancel, settle, withdraw and authorize a key. The gateway's
+`/v1/status` tells the page which contract and RPC to use. Wallets come from
+[NEAR Connect](https://github.com/hot-dao/near-connect); on testnet that includes Meteor, Intear
+and a NEAR CLI option that prints the command to sign.
+
+`scripts/use-capacity.sh` runs the key steps for a testnet buyer against a local gateway.
 
 Views: `key_hash_of`, `get_config`, `list_auctions`, `get_auction`, `get_bids`, `bids_of`, `balance_of`,
 `entitlements_of`, `list_entitlements`. Every state change emits an `EVENT_JSON` log
@@ -60,8 +66,8 @@ one, which is returned to its owner.
 - Proceeds are paid to the operator at clearing. There is no delivery-linked release or refund if
   the operator fails to serve the capacity.
 - Entitlements are records, not transferable tokens.
-- The dashboard still shows only the off-chain auctions; bidding on chain needs a NEAR wallet
-  and the CLI for now.
+- The dashboard's Market page still runs the off-chain auctions; the contract has its own
+  On-chain page.
 - The contract pays its own storage and has no upgrade or pause path.
 
 ## Build and test

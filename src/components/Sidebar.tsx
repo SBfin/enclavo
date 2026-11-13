@@ -7,6 +7,7 @@ import { Wordmark } from "@/components/Logo";
 
 const NAV = [
   { href: "/dashboard/market", label: "Market", icon: MarketIcon },
+  { href: "/dashboard/onchain", label: "On-chain", icon: ChainIcon },
   { href: "/dashboard/playground", label: "Playground", icon: RouterIcon },
   { href: "/dashboard/api-keys", label: "API Keys", icon: KeyIcon },
   { href: "/dashboard/settings", label: "Settings", icon: SettingsIcon },
@@ -82,6 +83,15 @@ function MarketIcon() {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
       <path d="M4 19V5M4 19h16" />
       <path d="M8 15l3-4 3 2 5-6" />
+    </svg>
+  );
+}
+
+function ChainIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
+      <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
     </svg>
   );
 }

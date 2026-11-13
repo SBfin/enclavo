@@ -49,7 +49,8 @@ enforced in Postgres for both Playground and external API requests.
 `contracts/` holds a NEAR version of the auction: bids are escrowed in a stablecoin, cleared with
 the same uniform-price rule, and winners receive an on-chain entitlement. Set
 `ENCLAVO_AUCTION_CONTRACT` and the gateway mirrors those entitlements into capacity contracts
-that a wallet-authorized API key can spend. See [contracts/README.md](contracts/README.md).
+that a wallet-authorized API key can spend. The **On-chain** dashboard page lets a NEAR wallet
+bid, settle, withdraw and authorize a key. See [contracts/README.md](contracts/README.md).
 
 ## Operator setup
 
