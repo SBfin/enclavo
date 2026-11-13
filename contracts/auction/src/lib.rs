@@ -317,6 +317,7 @@ impl Contract {
         }
         let price = if demand > auction.units as u128 { marginal } else { reserve };
 
+        let first_entitlement = self.entitlements.len();
         let mut proceeds: u128 = 0;
         for (&i, fill) in order.iter().zip(fills) {
             let bid = &mut book[i];
@@ -349,7 +350,6 @@ impl Contract {
                     ends_at_ms: now + auction.term_days as u64 * DAY_MS,
                     paid: U128(charged),
                 };
-                emit("entitlement_created", json!(entitlement));
                 let mut owned = self.account_entitlements.get(&bidder).cloned().unwrap_or_default();
                 owned.push(entitlement.id);
                 self.account_entitlements.insert(bidder.clone(), owned);
@@ -366,10 +366,14 @@ impl Contract {
         auction.clearing_price = (auction.filled_units > 0).then_some(U128(price));
         auction.open_bids = 0;
         auction.open_bid_units = 0;
+        // One event for the whole settlement: a log per winner would overrun the receipt's log limits
+        // on a full book and leave the auction impossible to clear.
         emit(
             "auction_cleared",
             json!({"auction_id": auction_id, "clearing_price": auction.clearing_price,
-                   "filled_units": auction.filled_units, "proceeds": U128(proceeds)}),
+                   "filled_units": auction.filled_units, "proceeds": U128(proceeds),
+                   "first_entitlement_id": first_entitlement,
+                   "entitlements": self.entitlements.len() - first_entitlement}),
         );
         self.auctions.replace(auction_id as u32, auction);
         self.bids.insert(auction_id, book);

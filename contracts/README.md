@@ -72,8 +72,9 @@ have not been tried.
 
 Views: `key_hash_of`, `get_config`, `list_auctions`, `get_auction`, `get_bids`, `bids_of`, `balance_of`,
 `entitlements_of`, `list_entitlements`. Every state change emits an `EVENT_JSON` log
-(`auction_published`, `bid_placed`, `bid_cancelled`, `bid_outbid`, `entitlement_created`,
-`auction_cleared`, `key_authorized`, `key_revoked`).
+(`auction_published`, `bid_placed`, `bid_cancelled`, `bid_outbid`, `auction_cleared`,
+`key_authorized`, `key_revoked`). Clearing emits one `auction_cleared` event that names the range of
+entitlement ids it created, so settling a full book stays inside NEAR's per-receipt log limits.
 
 An auction holds at most 100 open bids. When the book is full, a new bid must outprice the weakest
 one, which is returned to its owner.
@@ -87,6 +88,8 @@ one, which is returned to its owner.
 - The dashboard's Market page still runs the off-chain auctions; the contract has its own
   On-chain page.
 - The contract pays its own storage and has no upgrade or pause path.
+- An auction records at most 400 bids, cancelled ones included, so a spammer can close a book
+  early. Settling the worst case (100 winners, 400 recorded bids) burns about 52 Tgas.
 
 ## Build and test
 
@@ -96,7 +99,7 @@ Requires Rust with the `wasm32-unknown-unknown` target, a C toolchain and
 ```sh
 cargo near build non-reproducible-wasm --manifest-path auction/Cargo.toml
 cargo near build non-reproducible-wasm --manifest-path mock-usdc/Cargo.toml
-cargo test                      # unit tests + sandbox end-to-end test (needs the wasm files)
+cargo test                      # unit tests + sandbox end-to-end tests (need the wasm files; ~4 min)
 scripts/testnet-demo.sh         # one live 60-second auction on testnet
 scripts/use-capacity.sh         # authorize a key and spend the won capacity through the gateway
 ```
