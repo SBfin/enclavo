@@ -57,6 +57,15 @@ impl Chain {
         Self::new(rpc.as_deref().unwrap_or(DEFAULT_RPC_URL), contract.trim()).map(Some)
     }
 
+    /// What a browser needs to read the contract and send it transactions; none of it is secret.
+    pub fn public_info() -> Option<Value> {
+        let contract = std::env::var("ENCLAVO_AUCTION_CONTRACT").ok().filter(|s| !s.trim().is_empty())?;
+        let rpc = std::env::var("ENCLAVO_NEAR_RPC_URL").ok().filter(|s| !s.trim().is_empty());
+        let network = if contract.trim().ends_with(".testnet") { "testnet" } else { "mainnet" };
+        Some(json!({"network": network, "auction_contract": contract.trim(),
+                    "rpc_url": rpc.as_deref().unwrap_or(DEFAULT_RPC_URL)}))
+    }
+
     pub fn contract(&self) -> &str {
         &self.contract
     }
