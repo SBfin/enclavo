@@ -31,6 +31,7 @@ enum Key {
     AccountBids,
     Entitlements,
     AccountEntitlements,
+    ApiKeys,
 }
 
 #[near(serializers = [borsh, json])]
@@ -143,6 +144,23 @@ fn notional(units: u64, term_days: u32, price: u128) -> u128 {
         .checked_mul(term_days as u128)
         .and_then(|n| n.checked_mul(price))
         .unwrap_or_else(|| env::panic_str("Order notional is too large"))
+}
+
+/// Authorized key hashes live under their own storage prefix rather than in the contract struct,
+/// so adding them did not change the layout of already deployed state.
+fn api_keys() -> LookupMap<AccountId, [u8; 32]> {
+    LookupMap::new(Key::ApiKeys)
+}
+
+fn hex_32(value: &str) -> Option<[u8; 32]> {
+    if value.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(value.get(2 * i..2 * i + 2)?, 16).ok()?;
+    }
+    Some(out)
 }
 
 fn emit(event: &str, data: Value) {
@@ -391,7 +409,31 @@ impl Contract {
         U128(0)
     }
 
+    // ----- gateway access -----
+
+    /// Lets the caller's wallet authorize one gateway API key by its SHA-256 hash (64 hex chars).
+    /// The key itself never touches the chain. The gateway then accepts it for this account's
+    /// entitlements; calling again replaces the previous key.
+    pub fn authorize_key(&mut self, key_hash: String) {
+        let hash: [u8; 32] = hex_32(&key_hash).unwrap_or_else(|| env::panic_str("key_hash must be 64 hex characters"));
+        let account = env::predecessor_account_id();
+        api_keys().insert(account.clone(), hash);
+        emit("key_authorized", json!({"account_id": account, "key_hash": key_hash.to_lowercase()}));
+    }
+
+    /// Withdraws the caller's gateway key authorization.
+    pub fn revoke_key(&mut self) {
+        let account = env::predecessor_account_id();
+        if api_keys().remove(&account).is_some() {
+            emit("key_revoked", json!({"account_id": account}));
+        }
+    }
+
     // ----- views -----
+
+    pub fn key_hash_of(&self, account_id: AccountId) -> Option<String> {
+        api_keys().get(&account_id).map(|hash| hash.iter().map(|b| format!("{b:02x}")).collect())
+    }
 
     pub fn get_config(&self) -> Value {
         json!({"owner": self.owner, "token": self.token, "max_open_bids": MAX_OPEN_BIDS,

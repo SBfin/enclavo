@@ -257,3 +257,25 @@ fn failed_withdrawal_restores_the_balance() {
     c.on_withdraw(acc("alice.near"), U128(5 * USD), Ok(()));
     assert_eq!((balance(&c, "alice.near"), c.total_liabilities), (0, 0));
 }
+
+#[test]
+fn wallet_authorizes_replaces_and_revokes_a_gateway_key() {
+    let mut c = setup(10);
+    let first = "ab".repeat(32);
+    ctx("alice.near", 10);
+    c.authorize_key(first.to_uppercase());
+    assert_eq!(c.key_hash_of(acc("alice.near")), Some(first));
+    assert_eq!(c.key_hash_of(acc("bob.near")), None);
+    c.authorize_key("cd".repeat(32));
+    assert_eq!(c.key_hash_of(acc("alice.near")), Some("cd".repeat(32)));
+    c.revoke_key();
+    assert_eq!(c.key_hash_of(acc("alice.near")), None);
+}
+
+#[test]
+#[should_panic(expected = "64 hex characters")]
+fn malformed_key_hash_is_rejected() {
+    let mut c = setup(10);
+    ctx("alice.near", 10);
+    c.authorize_key("zz".repeat(32));
+}

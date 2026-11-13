@@ -32,10 +32,24 @@ Prices are per IU-day, and a bid escrows `units * term_days * max_price`.
    `Entitlement`; unspent escrow is unlocked and proceeds are credited to the operator.
 5. `withdraw` sends unlocked balance back to the wallet.
 
-Views: `get_config`, `list_auctions`, `get_auction`, `get_bids`, `bids_of`, `balance_of`,
+## Spending won capacity
+
+The gateway mirrors the contract when `ENCLAVO_AUCTION_CONTRACT` is set (`gateway/src/chain.rs`).
+It only makes view calls against finalized blocks, so it holds no chain key.
+
+1. Every entitlement becomes a gateway capacity contract owned by an account tied to the
+   winner's NEAR account. No sign-up is involved.
+2. The winner creates an API key locally and calls `authorize_key` with its SHA-256 hash. The key
+   never touches the chain. Calling again rotates it; `revoke_key` removes it.
+3. Within about ten seconds the gateway accepts that key. `GET /v1/contracts` lists the wallet's
+   entitlements, and a chat request with `capacity_contract_id` draws on one at no cash cost.
+
+`scripts/use-capacity.sh` runs these steps for a testnet buyer against a local gateway.
+
+Views: `key_hash_of`, `get_config`, `list_auctions`, `get_auction`, `get_bids`, `bids_of`, `balance_of`,
 `entitlements_of`, `list_entitlements`. Every state change emits an `EVENT_JSON` log
 (`auction_published`, `bid_placed`, `bid_cancelled`, `bid_outbid`, `entitlement_created`,
-`auction_cleared`) so the gateway can index entitlements.
+`auction_cleared`, `key_authorized`, `key_revoked`).
 
 An auction holds at most 100 open bids. When the book is full, a new bid must outprice the weakest
 one, which is returned to its owner.
@@ -45,7 +59,9 @@ one, which is returned to its owner.
 - Bids are public on chain; this is not a sealed-bid auction.
 - Proceeds are paid to the operator at clearing. There is no delivery-linked release or refund if
   the operator fails to serve the capacity.
-- Entitlements are records, not transferable tokens, and the gateway does not read them yet.
+- Entitlements are records, not transferable tokens.
+- The dashboard still shows only the off-chain auctions; bidding on chain needs a NEAR wallet
+  and the CLI for now.
 - The contract pays its own storage and has no upgrade or pause path.
 
 ## Build and test
@@ -58,4 +74,5 @@ cargo near build non-reproducible-wasm --manifest-path auction/Cargo.toml
 cargo near build non-reproducible-wasm --manifest-path mock-usdc/Cargo.toml
 cargo test                      # unit tests + sandbox end-to-end test (needs the wasm files)
 scripts/testnet-demo.sh         # one live 60-second auction on testnet
+scripts/use-capacity.sh         # authorize a key and spend the won capacity through the gateway
 ```
