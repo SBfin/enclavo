@@ -16,6 +16,20 @@ stablecoin, cleared at one uniform price, and winners receive an on-chain capaci
 | `enclavo-musdc.testnet` | Mock USDC (mUSDC, 6 decimals) |
 | `enclavo-ops.testnet` | Operator: publishes auctions, receives proceeds |
 
+Publish an auction as the operator (amounts in micro-USD, duration in milliseconds):
+
+```sh
+near contract call-function as-transaction enclavo-auction.testnet publish_auction json-args \
+  '{"route_id":"z-ai/glm-5.3-flash@near-ai","units":100,"term_days":7,"reserve_price":"500000","tokens_per_iu":1000000,"prompt_weight_bps":1600,"duration_ms":86400000}' \
+  prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as enclavo-ops.testnet \
+  network-config testnet sign-with-legacy-keychain send
+```
+
+`route_id` and `tokens_per_iu` must match the gateway's route for the model (`GET /v1/models`),
+and `prompt_weight_bps` is its input price divided by its output price, in basis points. The
+contract does not know the catalog. The operator key is held by the
+person who deployed the contracts, not stored in this repository.
+
 ## How it works
 
 Amounts are the token's atomic units; with 6 decimals that equals the gateway's micro-USD.
@@ -49,6 +63,10 @@ connect, get test mUSDC, bid, cancel, settle, withdraw and authorize a key. The 
 `/v1/status` tells the page which contract and RPC to use. Wallets come from
 [NEAR Connect](https://github.com/hot-dao/near-connect); on testnet that includes Meteor, Intear
 and a NEAR CLI option that prints the command to sign.
+
+The page was exercised end to end on testnet with the Intear web wallet approving each
+transaction, and with the NEAR CLI option. Meteor and Nightly are offered by the connector but
+have not been tried.
 
 `scripts/use-capacity.sh` runs the key steps for a testnet buyer against a local gateway.
 

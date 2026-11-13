@@ -16,6 +16,8 @@ kill_timeout = 300
   ENCLAVO_METRICS_LISTEN = "0.0.0.0:9091"
   ENCLAVO_DRAIN_TIMEOUT_SECS = "280"
   ENCLAVO_PUBLIC_URL = "https://enclavo-web.fly.dev/api"
+  # ENCLAVO_AUCTION_CONTRACT is deliberately unset: the only deployed contract is on testnet and
+  # settles in a mock token. Set it once a mainnet contract with a real stablecoin exists.
   LOG_FORMAT = "json"
   RUST_LOG = "info,enclavo_gateway=info"
 

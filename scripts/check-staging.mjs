@@ -17,7 +17,7 @@ const html = await home.text();
 const asset = html.match(/(?:src|href)="([^"<>]*\/_next\/static\/[^"<>]+\.(?:js|css))"/);
 assert.ok(asset, 'Market must reference a built static asset');
 await check(asset[1].replaceAll('&amp;', '&'));
-for (const path of ['/dashboard/playground', '/dashboard/api-keys']) await check(path);
+for (const path of ['/dashboard/onchain', '/dashboard/playground', '/dashboard/api-keys']) await check(path);
 const status = await (await check('/api/v1/status')).json();
 assert.equal(status.mode, 'live');
 assert.ok(status.providers.includes('near-ai'), 'Expected the live NEAR AI provider');

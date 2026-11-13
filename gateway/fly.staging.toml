@@ -16,6 +16,8 @@ kill_timeout = 300
   ENCLAVO_METRICS_LISTEN = "0.0.0.0:9091"
   ENCLAVO_DRAIN_TIMEOUT_SECS = "280"
   ENCLAVO_PUBLIC_URL = "https://enclavo-web-staging.fly.dev/api"
+  # Testnet auction contract mirrored into capacity contracts (see contracts/README.md).
+  ENCLAVO_AUCTION_CONTRACT = "enclavo-auction.testnet"
   LOG_FORMAT = "json"
   RUST_LOG = "info,enclavo_gateway=info"
 
