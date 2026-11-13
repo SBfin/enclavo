@@ -651,8 +651,7 @@ fn random_auctions_match_the_reference_model() {
     }
 }
 
-/// Regression: a log per winner used to overrun the receipt log limits and make a busy auction
-/// impossible to clear.
+/// Settlement logs stay constant in size however many bids win.
 #[test]
 fn full_book_of_winners_clears_with_a_single_event() {
     let mut c = setup(1_000);

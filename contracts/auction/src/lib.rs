@@ -387,8 +387,7 @@ impl Contract {
         auction.clearing_price = (auction.filled_units > 0).then_some(U128(price));
         auction.open_bids = 0;
         auction.open_bid_units = 0;
-        // One event for the whole settlement: a log per winner would overrun the receipt's log limits
-        // on a full book and leave the auction impossible to clear.
+        // One event for the whole settlement keeps the receipt inside NEAR's log limits at any book size.
         emit(
             "auction_cleared",
             json!({"auction_id": auction_id, "clearing_price": auction.clearing_price,

@@ -73,23 +73,29 @@ have not been tried.
 Views: `key_hash_of`, `get_config`, `list_auctions`, `get_auction`, `get_bids`, `bids_of`, `balance_of`,
 `entitlements_of`, `list_entitlements`. Every state change emits an `EVENT_JSON` log
 (`deposit`, `withdraw`, `withdraw_failed`, `auction_published`, `bid_placed`, `bid_cancelled`,
-`bid_outbid`, `auction_cleared`, `key_authorized`, `key_revoked`). Clearing emits one `auction_cleared` event that names the range of
-entitlement ids it created, so settling a full book stays inside NEAR's per-receipt log limits.
+`bid_outbid`, `auction_cleared`, `key_authorized`, `key_revoked`). Clearing emits a single
+`auction_cleared` event that names the range of entitlement ids it created.
 
 An auction holds at most 100 open bids. When the book is full, a new bid must outprice the weakest
 one, which is returned to its owner.
 
-## Limits
+## Scope and roadmap
 
-- Bids are public on chain; this is not a sealed-bid auction.
-- Proceeds are paid to the operator at clearing. There is no delivery-linked release or refund if
-  the operator fails to serve the capacity.
-- Entitlements are records, not transferable tokens.
-- The dashboard's Market page still runs the off-chain auctions; the contract has its own
-  On-chain page.
-- The contract pays its own storage and has no upgrade or pause path.
-- An auction records at most 400 bids, cancelled ones included, so a spammer can close a book
-  early. Settling the worst case (100 winners, 400 recorded bids) burns about 52 Tgas.
+This is a testnet MVP. What it deliberately leaves for later:
+
+- **Sealed bids.** Bids are public on chain today. The plan is to seal and clear them inside the
+  same TEEs that serve the inference.
+- **Delivery-linked payout.** The operator is credited at clearing. Next step: proceeds vest over
+  the term and the unserved part is refundable.
+- **Tradable capacity.** Entitlements are records owned by the winner, not transferable tokens yet.
+- **Market rules.** Minimum bid size, a cancel freeze before the close and other anti-manipulation
+  rules are not enforced; the clearing rule matches the off-chain market one to one.
+- **Operations.** The contract pays its own storage and has no upgrade or pause switch.
+
+Every auction is bounded so it always settles in one transaction: 100 open bids, 400 recorded bids.
+The worst case (100 winners out of 400 recorded bids) burns about 52 Tgas of the 300 Tgas limit.
+
+The dashboard's Market page runs the off-chain auctions; the contract has its own On-chain page.
 
 ## Build and test
 
