@@ -1,0 +1,14 @@
+[package]
+name = "enclavo-mock-usdc"
+description = "Testnet-only 6-decimal stablecoin with an open faucet, for Enclavo auction demos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { workspace = true }
+near-contract-standards = { workspace = true }
