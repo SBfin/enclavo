@@ -2,6 +2,7 @@ pub mod api;
 pub mod batch;
 pub mod billing;
 pub mod catalog;
+pub mod chain;
 pub mod config;
 pub mod control;
 pub mod devmock;
@@ -147,6 +148,11 @@ pub fn spawn_background(state: Shared) -> Vec<tokio::task::JoinHandle<()>> {
     let mut tasks = Vec::new();
     if state.cfg.batch.enabled {
         tasks.push(tokio::spawn(batch::run(state.clone())));
+    }
+    match chain::Chain::from_env() {
+        Ok(Some(chain)) => tasks.push(tokio::spawn(chain::run(state.clone(), chain))),
+        Ok(None) => {}
+        Err(err) => tracing::error!(error = %err, "on-chain auction mirror is misconfigured"),
     }
     tasks.push(tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(15));

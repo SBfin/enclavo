@@ -4,7 +4,7 @@ import { useAccount } from "@/components/AccountProvider";
 
 export type Auction = { id: string; route_id: string; units: number; term_days: number; reserve_price_micro_usd: number; ends_at: string; status: string; accepting: boolean; bid_units: number; bid_count: number; filled_units: number; clearing_price_micro_usd: number | null };
 export type Bid = { id: string; auction_id: string; route_id: string; units: number; term_days: number; max_price_micro_usd: number; status: string; filled_units: number; charged_micro_usd: number; ends_at: string };
-export type CapacityContract = { id: string; auction_id: string; route_id: string; units: number; starts_at: string; ends_at: string; active: boolean; paid_micro_usd: number; daily_tokens: number; used_tokens: number; held_tokens: number; remaining_tokens: number };
+export type CapacityContract = { id: string; auction_id: string | null; chain_contract: string | null; chain_entitlement_id: number | null; route_id: string; units: number; starts_at: string; ends_at: string; active: boolean; paid_micro_usd: number; daily_tokens: number; used_tokens: number; held_tokens: number; remaining_tokens: number };
 
 export function useMarket() {
   const { api, signedIn } = useAccount();

@@ -44,6 +44,13 @@ input/output ratio. Capacity resets every 24 hours from the contract's start; un
 roll over. Ownership, remaining quota, expiry, concurrent reservations, and failed-request recovery are
 enforced in Postgres for both Playground and external API requests.
 
+## On-chain auctions (NEAR testnet)
+
+`contracts/` holds a NEAR version of the auction: bids are escrowed in a stablecoin, cleared with
+the same uniform-price rule, and winners receive an on-chain entitlement. Set
+`ENCLAVO_AUCTION_CONTRACT` and the gateway mirrors those entitlements into capacity contracts
+that a wallet-authorized API key can spend. See [contracts/README.md](contracts/README.md).
+
 ## Operator setup
 
 Only the operator, with database access, can issue credit or publish capacity. These commands are not
