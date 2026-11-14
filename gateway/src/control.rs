@@ -56,18 +56,36 @@ pub fn routes() -> Router<Shared> {
         .route("/internal/market/contracts", get(crate::market::contracts))
 }
 
+/// Dashboard users are NEAR accounts (`near:<account>`), and the chain mirror keys the same
+/// person's on-chain capacity by `near_account_id`. Both resolve to one account row, so
+/// capacity won on chain is usable from the dashboard, Playground and the user's API keys.
+async fn link_near_account(conn: &mut PgConnection, user: &str) -> Result<(), ApiError> {
+    let Some(near) = user.strip_prefix("near:") else { return Ok(()) };
+    // An account the chain mirror created for this wallet becomes the dashboard account.
+    sqlx::query("UPDATE accounts SET owner_user_id=$1 WHERE near_account_id=$2 AND owner_user_id IS NULL AND NOT EXISTS (SELECT 1 FROM accounts WHERE owner_user_id=$1)")
+        .bind(user).bind(near).execute(&mut *conn).await?;
+    // A dashboard account created first is tagged so the mirror adds on-chain capacity to it.
+    sqlx::query("UPDATE accounts SET near_account_id=$2 WHERE owner_user_id=$1 AND near_account_id IS NULL AND NOT EXISTS (SELECT 1 FROM accounts WHERE near_account_id=$2)")
+        .bind(user).bind(near).execute(&mut *conn).await?;
+    Ok(())
+}
+
 pub async fn account_id(conn: &mut PgConnection, user: &str, create: bool) -> Result<Option<Uuid>, ApiError> {
+    link_near_account(&mut *conn, user).await?;
     if create {
-        sqlx::query("INSERT INTO accounts(id, api_key_hash, owner_user_id) VALUES($1,$2,$3) ON CONFLICT(owner_user_id) DO NOTHING")
-            .bind(Uuid::new_v4()).bind(ledger::hash_key(&ledger::new_api_key())).bind(user).execute(&mut *conn).await?;
+        sqlx::query("INSERT INTO accounts(id, api_key_hash, owner_user_id, near_account_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING")
+            .bind(Uuid::new_v4()).bind(ledger::hash_key(&ledger::new_api_key())).bind(user).bind(user.strip_prefix("near:"))
+            .execute(&mut *conn).await?;
     }
     Ok(sqlx::query_scalar("SELECT id FROM accounts WHERE owner_user_id=$1").bind(user).fetch_optional(conn).await?)
 }
 
 pub async fn owned_account(state: &Shared, user: &str) -> Result<ledger::Account, ApiError> {
+    let mut conn = state.db.acquire().await?;
+    link_near_account(&mut conn, user).await?;
     let row = sqlx::query("SELECT id,balance_micro,held_micro,created_at FROM accounts WHERE owner_user_id=$1")
         .bind(user)
-        .fetch_optional(&state.db)
+        .fetch_optional(&mut *conn)
         .await?
         .ok_or_else(|| ApiError::unauthorized("Create an API key or connect an existing account first."))?;
     Ok(ledger::Account {

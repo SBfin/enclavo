@@ -1,14 +1,14 @@
 "use client";
 import Link from "next/link";
-import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import PageHeader from "@/components/PageHeader";
-import { useAccount } from "@/components/AccountProvider";
 import { useWallet } from "@/components/WalletProvider";
 import { useCatalog, type GatewayModel } from "@/lib/use-catalog";
-import { useMarket, type Auction, type Bid } from "@/lib/use-market";
+import { useChainMarket } from "@/lib/use-chain-market";
+import { useMarket } from "@/lib/use-market";
+import { usd, type ChainAuction, type ChainBid } from "@/lib/near";
 import { fmtUSD, fmtTokens } from "@/lib/market";
-
-const usd = (micro: number) => micro / 1e6;
+import { IU_NOTE, STEPS } from "@/lib/how-it-works";
 
 // A one-second clock for countdowns. It reads 0 during prerendering and hydration, so
 // time-dependent text only appears once the page is running in the browser.
@@ -20,10 +20,10 @@ function subscribeClock(onTick: () => void) {
 }
 const useNow = () => useSyncExternalStore(subscribeClock, () => clock, () => 0);
 
-function timeLeft(endsAt: string, now: number): string {
+function timeLeft(endsAtMs: number, now: number): string {
   if (!now) return "…";
-  const ms = Date.parse(endsAt) - now;
-  if (ms <= 0) return "closing now";
+  const ms = endsAtMs - now;
+  if (ms <= 0) return "closed";
   const s = Math.floor(ms / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
   if (d >= 1) return `${d}d ${h % 24}h`;
   if (h >= 1) return `${h}h ${m % 60}m`;
@@ -31,160 +31,132 @@ function timeLeft(endsAt: string, now: number): string {
   return `${s}s`;
 }
 
-// What the public order book says about the price, without revealing anyone's bid.
-function demand(auction: Auction): { tone: "muted" | "good" | "warn"; text: string } {
-  if (auction.bid_units === 0) return { tone: "muted", text: "No bids yet. Any bid at or above the reserve would currently win and pay the reserve." };
-  if (auction.bid_units <= auction.units)
-    return { tone: "good", text: `${auction.units - auction.bid_units} of ${auction.units} IU/day still unclaimed. If it closed now, winners would pay the reserve.` };
-  return { tone: "warn", text: `Oversubscribed: ${auction.bid_units} IU/day bid for ${auction.units}. Highest bids win, and everyone pays the lowest winning bid.` };
+function demand(auction: ChainAuction): { tone: "muted" | "good" | "warn"; text: string } {
+  if (auction.open_bid_units === 0) return { tone: "muted", text: "No bids yet. Any bid at or above the reserve would currently win and pay the reserve." };
+  if (auction.open_bid_units <= auction.units)
+    return { tone: "good", text: `${auction.units - auction.open_bid_units} of ${auction.units} IU/day still unclaimed. If it closed now, winners would pay the reserve.` };
+  return { tone: "warn", text: `Oversubscribed: ${auction.open_bid_units} IU/day bid for ${auction.units}. Highest bids win, and everyone pays the lowest winning bid.` };
 }
 
 const BID_STATUS: Record<string, { label: string; tone: string; detail: string }> = {
-  open: { label: "Waiting", tone: "text-accent", detail: "Clears when the auction closes. You can still cancel." },
-  filled: { label: "Won", tone: "text-good", detail: "Filled in full. The capacity is in Your capacity." },
-  partial: { label: "Partly won", tone: "text-good", detail: "Part of your quantity filled; the rest of the hold was released." },
-  outbid: { label: "Not filled", tone: "text-muted", detail: "Higher bids took the lot, or your price was below the reserve. Hold released." },
-  cancelled: { label: "Cancelled", tone: "text-muted", detail: "Hold released." },
+  open: { label: "Waiting", tone: "text-accent", detail: "Escrowed until the auction is settled. You can cancel while it's open." },
+  filled: { label: "Won", tone: "text-good", detail: "Filled in full. See Your capacity." },
+  partial: { label: "Partly won", tone: "text-good", detail: "Part of your quantity filled; the rest was unlocked." },
+  outbid: { label: "Not filled", tone: "text-muted", detail: "Higher bids took the lot. Your escrow was unlocked." },
+  cancelled: { label: "Cancelled", tone: "text-muted", detail: "Escrow unlocked." },
 };
 
-const STEPS = [
-  ["Pick a lot", "The operator offers a fixed amount of one model's capacity, in IU/day, for a set term, with a minimum (reserve) price."],
-  ["Place a sealed bid", "Choose how many IU/day you want and the most you'd pay per IU-day. Quantity × max price × days is held from your credit."],
-  ["One price at close", "Highest bids fill first. If bids fit the lot, everyone pays the reserve; if not, everyone pays the lowest winning bid. Unused holds are released."],
-  ["Use your capacity", "Winners get a daily token allowance for the whole term, in Playground or through an API key. It resets every 24 hours."],
-] as const;
-
 export default function MarketPage() {
-  const { signIn } = useWallet();
-  const { account, signedIn, api, refresh: refreshAccount } = useAccount();
+  const { session, signIn, busy: signingIn, network } = useWallet();
   const { models, status, loading, error: catalogError } = useCatalog();
-  const { auctions, bids, contracts, error: marketError, refresh } = useMarket();
+  const chain = status?.chain ?? null;
+  const market = useChainMarket(chain);
+  const { contracts } = useMarket();
   const now = useNow();
-  const [selectedId, setSelectedId] = useState("");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [units, setUnits] = useState(1);
   const [price, setPrice] = useState("");
+  const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [search, setSearch] = useState("");
-  const [confirmedQuote, setConfirmedQuote] = useState<string | null>(null);
-  const submission = useRef<{ signature: string; id: string } | null>(null);
 
   const modelFor = (routeId: string): GatewayModel | undefined => models.find((m) => m.id === routeId);
   const nameFor = (routeId: string) => modelFor(routeId)?.name || routeId.replace(/@.*$/, "");
-  const open = useMemo(
-    () => auctions.filter((a) => a.status === "open" && a.accepting).sort((a, b) => a.ends_at.localeCompare(b.ends_at)),
-    [auctions],
-  );
-  const closed = auctions.filter((a) => !(a.status === "open" && a.accepting));
+  const accepting = (a: ChainAuction) => a.status === "open" && (!now || now < a.ends_at_ms);
+  const open = useMemo(() => market.auctions.filter((a) => a.status === "open" && (!now || now < a.ends_at_ms)).sort((a, b) => a.ends_at_ms - b.ends_at_ms), [market.auctions, now]);
+  const awaiting = market.auctions.filter((a) => a.status === "open" && now > 0 && now >= a.ends_at_ms);
+  const cleared = market.auctions.filter((a) => a.status === "cleared").sort((a, b) => (b.cleared_at_ms ?? 0) - (a.cleared_at_ms ?? 0));
   const auction = open.find((a) => a.id === selectedId) || open[0];
-  const model = auction ? modelFor(auction.route_id) : undefined;
 
-  const reserve = auction ? usd(auction.reserve_price_micro_usd) : 0;
+  const reserve = auction ? usd(auction.reserve_price) : 0;
   const effectivePrice = price || (auction ? String(reserve) : "");
-  const maxPrice = Number(effectivePrice);
+  const priceAtomic = Math.round(Number(effectivePrice) * 1e6);
   const qty = auction ? Math.min(units, auction.units) : units;
-  const days = auction?.term_days ?? 0;
-  const held = qty * days * maxPrice;
-  const belowReserve = Boolean(auction) && maxPrice < reserve;
-  const fitsAtReserve = auction ? auction.bid_units + qty <= auction.units : false;
-  const available = usd(account?.balance_micro_usd || 0);
-  const quote = JSON.stringify([auction?.id, qty, effectivePrice]);
-  const confirmBid = confirmedQuote === quote;
-  const setConfirmBid = (value: boolean) => setConfirmedQuote(value ? quote : null);
+  const escrow = auction ? qty * auction.term_days * priceAtomic : 0;
+  const belowReserve = Boolean(auction) && priceAtomic < Number(auction?.reserve_price);
+  const fitsAtReserve = auction ? auction.open_bid_units + qty <= auction.units : false;
+  const funds = market.wallet + market.unlocked;
+  const short = Boolean(session) && market.loaded && funds < escrow;
+  const escrowed = market.bids.filter((b) => b.status === "open").reduce((sum, b) => sum + Number(b.escrow), 0);
 
-  const sortedModels = useMemo(
-    () => models.filter((m) => `${m.name} ${m.model}`.toLowerCase().includes(search.toLowerCase())).sort((a, b) => a.price_per_iu_usd - b.price_per_iu_usd),
-    [models, search],
-  );
-  const activeContracts = contracts.filter((contract) => contract.active);
+  const syncedIds = new Set(contracts.map((c) => c.chain_entitlement_id).filter((id) => id != null));
+  const activeContracts = contracts.filter((c) => c.active);
+  const syncing = market.entitlements.filter((e) => !syncedIds.has(e.id) && e.ends_at_ms > (now || 0));
 
-  function select(id: string) {
-    setSelectedId(id); setUnits(1); setPrice(""); setConfirmedQuote(null); setNotice(null); setFailure(null);
-  }
+  function select(id: number) { setSelectedId(id); setUnits(1); setPrice(""); setNotice(null); setFailure(null); }
 
-  async function placeBid() {
-    if (!auction) return;
+  async function run(done: string, action: () => Promise<unknown>) {
     setBusy(true); setFailure(null); setNotice(null);
-    try {
-      const signature = JSON.stringify([auction.id, qty, effectivePrice]);
-      if (submission.current?.signature !== signature) submission.current = { signature, id: crypto.randomUUID() };
-      const response = await api("market/bids", { method: "POST", body: JSON.stringify({ auction_id: auction.id, client_order_id: submission.current.id, units: qty, max_price_usd: effectivePrice }) });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error?.message || "The bid was not accepted.");
-      setNotice(body.duplicate ? "This bid was already recorded. Its current status is shown below." : `Bid placed. ${fmtUSD(held, 2)} is held until the auction closes in ${timeLeft(auction.ends_at, Date.now())}.`);
-      setConfirmBid(false); submission.current = null;
-      await Promise.all([refresh(), refreshAccount()]);
-    } catch (error) { setFailure(error instanceof Error ? error.message : "Could not place your bid."); }
+    try { await action(); setNotice(done); await market.refresh(); }
+    catch (error) { setFailure(error instanceof Error ? error.message : "The transaction was not completed."); }
     finally { setBusy(false); }
   }
 
-  async function cancel(id: string) {
-    setBusy(true); setFailure(null); setNotice(null);
-    try {
-      const response = await api(`market/bids/${id}`, { method: "DELETE" });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error?.message || "Could not cancel the bid.");
-      setNotice("Bid cancelled. Its hold has been released.");
-      await Promise.all([refresh(), refreshAccount()]);
-    } catch (error) { setFailure(error instanceof Error ? error.message : "Could not cancel the bid."); }
-    finally { setBusy(false); }
-  }
+  if (!loading && !chain) return <div className="mx-auto w-full max-w-7xl px-6 py-8 sm:px-10">
+    <PageHeader title="Market" />
+    <p className="border border-line p-5 text-sm text-muted">{catalogError || "This deployment is not connected to an auction contract yet."}</p>
+  </div>;
 
   return <div className="mx-auto w-full max-w-7xl px-6 py-8 sm:px-10">
-    <PageHeader title="Market" note="Capacity auctions · $ / IU-day" />
-    {status?.mode === "test" && <p className="mb-5 text-sm text-warn">Test providers · no real inference or settlement.</p>}
-    {(catalogError || marketError || failure) && <p role="alert" className="mb-5 border border-warn p-4 text-sm text-warn">{failure || catalogError || marketError}</p>}
+    <PageHeader title="Market" note={chain ? `Settled on NEAR ${chain.network} · ${market.contract}` : "Settled on NEAR"} />
+    {(market.error || failure) && <p role="alert" className="mb-5 border border-warn p-4 text-sm text-warn">{failure || market.error}</p>}
     {notice && <p role="status" className="mb-5 border border-line p-4 text-sm text-good">{notice}</p>}
 
     <section aria-labelledby="how-it-works" className="border border-line">
       <h2 id="how-it-works" className="sr-only">How auctions work</h2>
       <ol className="grid md:grid-cols-4">
-        {STEPS.map(([title, text], i) => <li key={title} className="border-line p-4 max-md:[&:not(:first-child)]:border-t md:[&:not(:first-child)]:border-l">
+        {STEPS.map(({ title, text }, i) => <li key={title} className="border-line p-4 max-md:[&:not(:first-child)]:border-t md:[&:not(:first-child)]:border-l">
           <div className="flex items-baseline gap-2"><span className="font-mono text-xs text-accent">{i + 1}</span><span className="text-sm font-medium">{title}</span></div>
           <p className="mt-2 text-xs leading-5 text-muted">{text}</p>
         </li>)}
       </ol>
-      <p className="border-t border-line px-4 py-2 text-xs text-muted">1 IU = one million output-token equivalents per day. Input tokens count at the model&apos;s input/output price ratio.</p>
+      <p className="flex flex-wrap justify-between gap-2 border-t border-line px-4 py-2 text-xs text-muted"><span>{IU_NOTE}</span><Link href="/dashboard/how-it-works" className="text-accent">How pricing works →</Link></p>
     </section>
 
     <section className="mt-6 grid grid-cols-2 border border-line md:grid-cols-4">
-      <Tile label="Open auctions" value={String(open.length)} hint={`${models.length} live models`} />
-      <Tile label="Capacity offered" value={fmtTokens(open.reduce((sum, a) => sum + a.units, 0))} hint="IU / day across open lots" />
-      <Tile label="Available credit" value={fmtUSD(available, 2)} hint={signedIn ? "Your account" : "Connect a wallet to trade"} />
-      <Tile label="Held for bids" value={fmtUSD(usd(account?.held_micro_usd || 0), 2)} hint="Released if you don't win" />
+      <Tile label="Open auctions" value={String(open.length)} hint={`${fmtTokens(open.reduce((sum, a) => sum + a.units, 0))} IU/day offered`} />
+      <Tile label="USDC in wallet" value={session ? fmtUSD(usd(market.wallet), 2) : "—"} hint={session ? "Available to bid" : "Connect a wallet"} />
+      <Tile label="In escrow" value={session ? fmtUSD(usd(escrowed), 2) : "—"} hint="Held by your open bids" />
+      <Tile label="Unlocked" value={session ? fmtUSD(usd(market.unlocked), 2) : "—"} hint={market.unlocked > 0 ? "Used first for bids · withdraw in Account" : "Refunds land here"} />
     </section>
 
     <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1fr)_340px]">
       <section className="min-w-0">
         <h2 className="mb-3 text-lg font-medium">Open auctions</h2>
-        {!open.length && <p className="border border-dashed border-line p-5 text-sm text-muted">{loading ? "Loading auctions…" : "No auctions are open right now. The operator publishes new lots of capacity; check back soon."}</p>}
+        {!open.length && <p className="border border-dashed border-line p-5 text-sm text-muted">{!market.loaded ? "Reading the auction contract…" : "No auctions are open right now. New lots of capacity are published on chain; check back soon."}</p>}
         <ul className="space-y-3">
           {open.map((a) => {
             const selected = a.id === auction?.id;
             const state = demand(a);
-            const filled = Math.min(a.bid_units / a.units, 1);
-            const m = modelFor(a.route_id);
             return <li key={a.id}>
               <button type="button" aria-pressed={selected} onClick={() => select(a.id)} className={`w-full border p-4 text-left transition ${selected ? "border-accent bg-white/[0.05]" : "border-line hover:bg-white/[0.03]"}`}>
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="font-medium">{nameFor(a.route_id)}</span>
-                  <span className="font-mono text-xs text-muted">closes in <span className="text-foreground tnum">{timeLeft(a.ends_at, now)}</span></span>
+                  <span className="font-mono text-xs text-muted">closes in <span className="text-foreground tnum">{timeLeft(a.ends_at_ms, now)}</span></span>
                 </div>
                 <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
-                  <Fact label="Lot" value={`${a.units} IU/day`} sub={`${fmtTokens(a.units * (m?.tokens_per_iu || 1e6))} tokens/day`} />
-                  <Fact label="Term" value={`${a.term_days} days`} sub="starts at close" />
-                  <Fact label="Reserve" value={fmtUSD(usd(a.reserve_price_micro_usd), 2)} sub="min $ / IU-day" />
+                  <Fact label="Lot" value={`${a.units} IU/day`} sub={`${fmtTokens(a.units * a.tokens_per_iu)} tokens/day`} />
+                  <Fact label="Term" value={`${a.term_days} days`} sub="starts when settled" />
+                  <Fact label="Reserve" value={fmtUSD(usd(a.reserve_price), 2)} sub="min $ / IU-day" />
                 </div>
                 <div className="mt-4">
-                  <div className="flex justify-between text-xs text-muted"><span>Demand</span><span className="tnum">{a.bid_units} / {a.units} IU/day · {a.bid_count} {a.bid_count === 1 ? "bid" : "bids"}</span></div>
-                  <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/[0.08]"><div className={`h-full ${state.tone === "warn" ? "bg-warn" : "bg-good"}`} style={{ width: `${filled * 100}%` }} /></div>
+                  <div className="flex justify-between text-xs text-muted"><span>Demand</span><span className="tnum">{a.open_bid_units} / {a.units} IU/day · {a.open_bids} {a.open_bids === 1 ? "bid" : "bids"}</span></div>
+                  <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/[0.08]"><div className={`h-full ${state.tone === "warn" ? "bg-warn" : "bg-good"}`} style={{ width: `${Math.min(a.open_bid_units / a.units, 1) * 100}%` }} /></div>
                   <p className={`mt-2 text-xs ${state.tone === "warn" ? "text-warn" : state.tone === "good" ? "text-good" : "text-muted"}`}>{state.text}</p>
                 </div>
               </button>
             </li>;
           })}
         </ul>
+
+        {awaiting.length > 0 && <div className="mt-8">
+          <h2 className="mb-3 text-lg font-medium">Closed · ready to settle</h2>
+          <ul className="space-y-3">{awaiting.map((a) => <li key={a.id} className="flex flex-wrap items-center justify-between gap-3 border border-line p-4">
+            <div><div className="font-medium">{nameFor(a.route_id)}</div><div className="text-xs text-muted">{a.units} IU/day · {a.term_days} days · {a.open_bid_units} IU/day bid by {a.open_bids} {a.open_bids === 1 ? "bidder" : "bidders"}</div></div>
+            <button disabled={busy || !session} onClick={() => void run("Auction settled. Winners now hold capacity; unspent escrow is unlocked.", () => market.settle(a.id))} className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background disabled:opacity-40">Settle now</button>
+          </li>)}</ul>
+          <p className="mt-2 text-xs text-muted">Settling runs the clearing on chain. Anyone with a connected wallet can do it, for a small gas fee.</p>
+        </div>}
       </section>
 
       <aside className="h-fit border border-line bg-panel p-5 lg:sticky lg:top-6">
@@ -194,73 +166,81 @@ export default function MarketPage() {
         </> : <>
           <div className="label">Your bid</div>
           <h2 className="mt-1 text-lg font-medium">{nameFor(auction.route_id)}</h2>
-          <p className="mt-1 text-sm text-muted">{auction.units} IU/day lot · {auction.term_days}-day term · closes in {timeLeft(auction.ends_at, now)}</p>
+          <p className="mt-1 text-sm text-muted">{auction.units} IU/day lot · {auction.term_days}-day term · closes in {timeLeft(auction.ends_at_ms, now)}</p>
 
           <label className="mt-6 flex justify-between text-sm" htmlFor="quantity"><span>Quantity</span><span className="label">IU / day · max {auction.units}</span></label>
-          <input id="quantity" type="number" min={1} max={auction.units} step={1} value={qty} onChange={(event) => { setUnits(Math.min(auction.units, Math.max(1, Math.floor(Number(event.target.value) || 1)))); setConfirmBid(false); }} className="mt-2 w-full rounded-md border border-line bg-background px-3 py-2 font-mono" />
+          <input id="quantity" type="number" min={1} max={auction.units} step={1} value={qty} onChange={(event) => setUnits(Math.min(auction.units, Math.max(1, Math.floor(Number(event.target.value) || 1))))} className="mt-2 w-full rounded-md border border-line bg-background px-3 py-2 font-mono" />
 
-          <label className="mt-5 flex justify-between text-sm" htmlFor="bid-price"><span>Maximum price</span><span className="label">$ / IU-day</span></label>
-          <input id="bid-price" type="number" min={reserve} step="0.01" value={effectivePrice} onChange={(event) => { setPrice(event.target.value); setConfirmBid(false); }} className={`mt-2 w-full rounded-md border bg-background px-3 py-2 font-mono ${belowReserve ? "border-warn" : "border-line"}`} />
+          <label className="mt-5 flex justify-between text-sm" htmlFor="bid-price"><span>Maximum price</span><span className="label">USDC / IU-day</span></label>
+          <input id="bid-price" type="number" min={reserve} step="0.01" value={effectivePrice} onChange={(event) => setPrice(event.target.value)} className={`mt-2 w-full rounded-md border bg-background px-3 py-2 font-mono ${belowReserve ? "border-warn" : "border-line"}`} />
           <p className={`mt-2 text-xs ${belowReserve ? "text-warn" : "text-muted"}`}>
-            {belowReserve ? `Below the ${fmtUSD(reserve, 2)} reserve: this bid could not win.` : `Reserve is ${fmtUSD(reserve, 2)}. Winners pay the clearing price, never more than their maximum. Bid higher only to beat competing bids.`}
+            {belowReserve ? `Below the ${fmtUSD(reserve, 2)} reserve: the contract rejects this bid.` : `Reserve is ${fmtUSD(reserve, 2)}. Winners pay the clearing price, never more than their maximum.`}
           </p>
 
           <dl className="mt-6 space-y-3 border-t border-line pt-4 text-sm">
-            <Row label="If you win" value={`${fmtTokens(qty * (model?.tokens_per_iu || 1e6))} tokens/day for ${auction.term_days} days`} />
-            <Row label="Held from credit now" value={Number.isFinite(held) ? fmtUSD(held, 2) : "—"} mono />
-            <Row label="Cost if it closed now" mono value={belowReserve ? "Not filled" : fitsAtReserve ? fmtUSD(qty * days * reserve, 2) : `${fmtUSD(qty * days * reserve, 2)}–${fmtUSD(held, 2)}`} />
+            <Row label="If you win" value={`${fmtTokens(qty * auction.tokens_per_iu)} tokens/day for ${auction.term_days} days`} />
+            <Row label="Escrowed now" value={Number.isFinite(escrow) ? fmtUSD(usd(escrow), 2) : "—"} mono />
+            <Row label="Cost if it closed now" mono value={belowReserve ? "Not filled" : fitsAtReserve ? fmtUSD(qty * auction.term_days * reserve, 2) : `${fmtUSD(qty * auction.term_days * reserve, 2)}–${fmtUSD(usd(escrow), 2)}`} />
           </dl>
-          {!belowReserve && !fitsAtReserve && <p className="mt-2 text-xs text-muted">Demand would exceed the lot, so the price depends on other sealed bids. You may also get only part of your quantity.</p>}
 
-          {!signedIn ? <button onClick={() => void signIn()} className="mt-6 w-full rounded-md bg-foreground py-3 text-sm font-medium text-background">Connect NEAR wallet to bid</button>
-            : !account ? <Link href="/dashboard/api-keys" className="mt-6 block rounded-md bg-foreground py-3 text-center text-sm font-medium text-background">Connect your account</Link>
+          {!session ? <button disabled={signingIn} onClick={() => void signIn()} className="mt-6 w-full rounded-md bg-foreground py-3 text-sm font-medium text-background disabled:opacity-40">{signingIn ? "Waiting for wallet…" : "Connect NEAR wallet to bid"}</button>
             : <>
-              <button disabled={busy || belowReserve || !(held > 0) || available < held} onClick={() => confirmBid ? placeBid() : setConfirmBid(true)} className="mt-6 w-full rounded-md bg-foreground py-3 text-sm font-medium text-background transition hover:bg-accent disabled:opacity-40">
-                {busy ? "Submitting…" : confirmBid ? `Confirm · hold ${fmtUSD(held, 2)}` : "Place bid"}
+              <button disabled={busy || belowReserve || !(escrow > 0) || short} onClick={() => void run(`Bid placed. ${fmtUSD(usd(escrow), 2)} is escrowed until the auction is settled.`, () => market.placeBid(auction, qty, priceAtomic))} className="mt-6 w-full rounded-md bg-foreground py-3 text-sm font-medium text-background transition hover:bg-accent disabled:opacity-40">
+                {busy ? "Confirm in your wallet…" : `Place bid · escrow ${fmtUSD(usd(escrow), 2)}`}
               </button>
-              {confirmBid && <button onClick={() => setConfirmBid(false)} className="mt-2 w-full text-sm text-muted">Back</button>}
-              {available < held && <p className="mt-3 text-sm text-warn">You have {fmtUSD(available, 2)} of credit; this bid needs {fmtUSD(held, 2)}. Lower the quantity or price, or ask the operator for credit.</p>}
+              {short && <div className="mt-3 text-sm text-warn">
+                <p>You have {fmtUSD(usd(funds), 2)} available; this bid escrows {fmtUSD(usd(escrow), 2)}.</p>
+                {network === "testnet" && <button disabled={busy} onClick={() => void run("1,000 test USDC added to your wallet.", market.faucet)} className="mt-2 rounded-md border border-line px-3 py-1.5 text-foreground disabled:opacity-40">Get 1,000 test USDC</button>}
+              </div>}
             </>}
-          <p className="mt-4 text-xs leading-5 text-muted">You can cancel until the auction closes. At close, anything you don&apos;t pay is released back to your credit.</p>
+          <p className="mt-4 text-xs leading-5 text-muted">Your wallet asks you to confirm each transaction. You can cancel a bid until the auction closes.</p>
         </>}
       </aside>
     </div>
+
+    <section className="mt-10">
+      <h2 className="mb-3 text-lg font-medium">Your capacity</h2>
+      <div className="grid gap-4 md:grid-cols-2">
+        {activeContracts.map((c) => <article key={c.id} className="border border-line bg-panel p-5">
+          <h3 className="font-medium">{nameFor(c.route_id)}</h3>
+          <p className="mt-2 text-sm text-muted">{c.units} IU/day · ends {new Date(c.ends_at).toLocaleDateString()}</p>
+          <div className="mt-4 flex justify-between text-sm"><span>Remaining today</span><span className="font-mono">{fmtTokens(c.remaining_tokens)} of {fmtTokens(c.daily_tokens)} tokens</span></div>
+          <Link href={`/dashboard/playground?model=${encodeURIComponent(c.route_id)}&contract=${c.id}`} className="mt-4 inline-block rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background">Try it in Playground →</Link>
+        </article>)}
+        {syncing.map((e) => <article key={`e${e.id}`} className="border border-dashed border-line p-5">
+          <h3 className="font-medium">{nameFor(e.route_id)}</h3>
+          <p className="mt-2 text-sm text-muted">{e.units} IU/day · won on chain · syncing to your account (a few seconds)…</p>
+        </article>)}
+      </div>
+      {!activeContracts.length && !syncing.length && <p className="border border-line p-5 text-sm text-muted">{session ? "Capacity you win appears here once its auction is settled." : "Connect your wallet to see the capacity you own."}</p>}
+    </section>
 
     <section className="mt-10">
       <h2 className="mb-3 text-lg font-medium">Your bids</h2>
       <div className="overflow-x-auto border border-line">
         <table className="w-full min-w-[680px] text-left text-sm">
           <thead><tr className="border-b border-line"><th className="label px-4 py-3 font-normal">Auction</th><th className="label px-4 py-3 font-normal">Quantity</th><th className="label px-4 py-3 font-normal">Max / IU-day</th><th className="label px-4 py-3 font-normal">Status</th><th className="label px-4 py-3 font-normal">Won · paid</th><th /></tr></thead>
-          <tbody>{bids.map((bid) => <BidRow key={bid.id} bid={bid} name={nameFor(bid.route_id)} now={now} busy={busy} onCancel={cancel} />)}</tbody>
+          <tbody>{market.bids.map((bid) => {
+            const lot = market.auctions.find((a) => a.id === bid.auction_id);
+            return <BidRow key={`${bid.auction_id}:${bid.index}`} bid={bid} lot={lot} name={lot ? nameFor(lot.route_id) : `Auction ${bid.auction_id}`} now={now} busy={busy}
+              canCancel={Boolean(lot && accepting(lot))} onCancel={() => void run("Bid cancelled. Its escrow is unlocked.", () => market.cancelBid(bid))} />;
+          })}</tbody>
         </table>
-        {!bids.length && <p className="p-5 text-sm text-muted">{signedIn ? "No bids yet. Pick an open auction above." : "Connect your NEAR wallet to see your bids."}</p>}
+        {!market.bids.length && <p className="p-5 text-sm text-muted">{session ? "No bids yet. Pick an open auction above." : "Connect your NEAR wallet to see your bids."}</p>}
       </div>
     </section>
 
-    <section className="mt-10">
-      <h2 className="mb-3 text-lg font-medium">Your capacity</h2>
-      <div className="grid gap-4 md:grid-cols-2">
-        {activeContracts.map((contract) => <article key={contract.id} className="border border-line bg-panel p-5">
-          <h3 className="font-medium">{nameFor(contract.route_id)}</h3>
-          <p className="mt-2 text-sm text-muted">{contract.units} IU/day · ends {new Date(contract.ends_at).toLocaleDateString()}</p>
-          <div className="mt-4 flex justify-between text-sm"><span>Remaining today</span><span className="font-mono">{fmtTokens(contract.remaining_tokens)} of {fmtTokens(contract.daily_tokens)} tokens</span></div>
-          <Link href={`/dashboard/playground?model=${encodeURIComponent(contract.route_id)}&contract=${contract.id}`} className="mt-4 inline-block rounded-md border border-line px-4 py-2 text-sm">Use in Playground →</Link>
-        </article>)}
-      </div>
-      {!activeContracts.length && <p className="border border-line p-5 text-sm text-muted">Capacity you win appears here when its auction closes. Use it in Playground or with an API key.</p>}
-    </section>
-
-    {closed.length > 0 && <section className="mt-10">
-      <h2 className="mb-3 text-lg font-medium">Recently closed</h2>
+    {cleared.length > 0 && <section className="mt-10">
+      <h2 className="mb-3 text-lg font-medium">Recently settled</h2>
       <div className="overflow-x-auto border border-line">
         <table className="w-full min-w-[620px] text-left text-sm">
-          <thead><tr className="border-b border-line"><th className="label px-4 py-3 font-normal">Auction</th><th className="label px-4 py-3 font-normal">Sold</th><th className="label px-4 py-3 font-normal">Reserve</th><th className="label px-4 py-3 font-normal">Clearing price</th><th className="label px-4 py-3 font-normal">Closed</th></tr></thead>
-          <tbody>{closed.map((a) => <tr key={a.id} className="border-b border-line last:border-0">
-            <td className="px-4 py-3">{nameFor(a.route_id)}<div className="text-xs text-muted">{a.term_days} days</div></td>
-            <td className="px-4 py-3 font-mono">{a.status === "open" ? "clearing…" : `${a.filled_units} / ${a.units} IU/day`}</td>
-            <td className="px-4 py-3 font-mono">{fmtUSD(usd(a.reserve_price_micro_usd), 2)}</td>
-            <td className="px-4 py-3 font-mono">{a.clearing_price_micro_usd != null ? fmtUSD(usd(a.clearing_price_micro_usd), 2) : <span className="font-sans text-muted">{a.status === "open" ? "—" : "No winning bids"}</span>}</td>
-            <td className="px-4 py-3 text-muted">{new Date(a.ends_at).toLocaleString()}</td>
+          <thead><tr className="border-b border-line"><th className="label px-4 py-3 font-normal">Auction</th><th className="label px-4 py-3 font-normal">Sold</th><th className="label px-4 py-3 font-normal">Reserve</th><th className="label px-4 py-3 font-normal">Clearing price</th><th className="label px-4 py-3 font-normal">Settled</th></tr></thead>
+          <tbody>{cleared.slice(0, 10).map((a) => <tr key={a.id} className="border-b border-line last:border-0">
+            <td className="px-4 py-3">{nameFor(a.route_id)}<div className="text-xs text-muted">#{a.id} · {a.term_days} days</div></td>
+            <td className="px-4 py-3 font-mono">{a.filled_units} / {a.units} IU/day</td>
+            <td className="px-4 py-3 font-mono">{fmtUSD(usd(a.reserve_price), 2)}</td>
+            <td className="px-4 py-3 font-mono">{a.clearing_price ? fmtUSD(usd(a.clearing_price), 2) : <span className="font-sans text-muted">No winning bids</span>}</td>
+            <td className="px-4 py-3 text-muted">{a.cleared_at_ms ? new Date(a.cleared_at_ms).toLocaleString() : "—"}</td>
           </tr>)}</tbody>
         </table>
       </div>
@@ -268,39 +248,36 @@ export default function MarketPage() {
 
     <details className="mt-10 border border-line">
       <summary className="cursor-pointer px-4 py-3 text-sm">All models and token prices <span className="text-muted">· {models.length} live</span></summary>
-      <div className="border-t border-line p-4">
-        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search models" aria-label="Search models" className="mb-3 w-full max-w-xs rounded-md border border-line bg-background px-3 py-2 text-sm" />
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[680px] text-left text-sm">
-            <thead><tr className="border-b border-line"><th className="label px-3 py-2 font-normal">Model</th><th className="label px-3 py-2 font-normal">Context</th><th className="label px-3 py-2 text-right font-normal">Input / 1M</th><th className="label px-3 py-2 text-right font-normal">Output / 1M</th><th className="label px-3 py-2 text-right font-normal">Open auctions</th></tr></thead>
-            <tbody>{sortedModels.map((item) => {
-              const first = open.find((a) => a.route_id === item.id);
-              const count = open.filter((a) => a.route_id === item.id).length;
-              return <tr key={item.id} className="border-b border-line last:border-0">
-                <td className="px-3 py-2">{item.name}<div className="text-xs text-muted">{item.model} · NEAR AI · {item.provider_type === "vllm" ? "Confidential TEE" : "Partner TEE"}</div></td>
-                <td className="px-3 py-2 font-mono text-xs text-muted">{item.context_length ? fmtTokens(item.context_length) : "—"}</td>
-                <td className="px-3 py-2 text-right font-mono">{fmtUSD(item.input_price_per_million_tokens_usd, 2)}</td>
-                <td className="px-3 py-2 text-right font-mono">{fmtUSD(item.price_per_million_tokens_usd, 2)}</td>
-                <td className="px-3 py-2 text-right">{first ? <button onClick={() => select(first.id)} className="text-accent">{count} · bid →</button> : <span className="text-muted">—</span>}</td>
-              </tr>;
-            })}</tbody>
-          </table>
-        </div>
+      <div className="overflow-x-auto border-t border-line p-4">
+        <table className="w-full min-w-[620px] text-left text-sm">
+          <thead><tr className="border-b border-line"><th className="label px-3 py-2 font-normal">Model</th><th className="label px-3 py-2 font-normal">Context</th><th className="label px-3 py-2 text-right font-normal">Input / 1M</th><th className="label px-3 py-2 text-right font-normal">Output / 1M</th><th className="label px-3 py-2 text-right font-normal">Open auctions</th></tr></thead>
+          <tbody>{[...models].sort((a, b) => a.price_per_iu_usd - b.price_per_iu_usd).map((item) => {
+            const first = open.find((a) => a.route_id === item.id);
+            return <tr key={item.id} className="border-b border-line last:border-0">
+              <td className="px-3 py-2">{item.name}<div className="text-xs text-muted">{item.model} · NEAR AI · {item.provider_type === "vllm" ? "Confidential TEE" : "Partner TEE"}</div></td>
+              <td className="px-3 py-2 font-mono text-xs text-muted">{item.context_length ? fmtTokens(item.context_length) : "—"}</td>
+              <td className="px-3 py-2 text-right font-mono">{fmtUSD(item.input_price_per_million_tokens_usd, 2)}</td>
+              <td className="px-3 py-2 text-right font-mono">{fmtUSD(item.price_per_million_tokens_usd, 2)}</td>
+              <td className="px-3 py-2 text-right">{first ? <button onClick={() => select(first.id)} className="text-accent">{open.filter((a) => a.route_id === item.id).length} · bid →</button> : <span className="text-muted">—</span>}</td>
+            </tr>;
+          })}</tbody>
+        </table>
         <p className="mt-3 text-xs text-muted">Hardware attestation is reported by the provider; proof verification is not yet enabled.</p>
       </div>
     </details>
   </div>;
 }
 
-function BidRow({ bid, name, now, busy, onCancel }: { bid: Bid; name: string; now: number; busy: boolean; onCancel: (id: string) => void }) {
+function BidRow({ bid, lot, name, now, busy, canCancel, onCancel }: { bid: ChainBid; lot?: ChainAuction; name: string; now: number; busy: boolean; canCancel: boolean; onCancel: () => void }) {
   const info = BID_STATUS[bid.status] || { label: bid.status, tone: "text-muted", detail: "" };
+  const closing = bid.status === "open" && lot ? (now && now >= lot.ends_at_ms ? " · closed, awaiting settlement" : ` · closes in ${timeLeft(lot.ends_at_ms, now)}`) : "";
   return <tr className="border-b border-line align-top last:border-0">
-    <td className="px-4 py-3">{name}<div className="text-xs text-muted">{bid.term_days} days{bid.status === "open" ? ` · closes in ${timeLeft(bid.ends_at, now)}` : ""}</div></td>
+    <td className="px-4 py-3">{name}<div className="text-xs text-muted">#{bid.auction_id}{lot ? ` · ${lot.term_days} days` : ""}{closing}</div></td>
     <td className="px-4 py-3 font-mono">{bid.units} IU/day</td>
-    <td className="px-4 py-3 font-mono">{fmtUSD(usd(bid.max_price_micro_usd), 2)}</td>
+    <td className="px-4 py-3 font-mono">{fmtUSD(usd(bid.max_price), 2)}</td>
     <td className="px-4 py-3"><span className={info.tone}>{info.label}</span><div className="max-w-56 text-xs text-muted">{info.detail}</div></td>
-    <td className="px-4 py-3 font-mono">{bid.status === "open" ? "—" : `${bid.filled_units} IU · ${fmtUSD(usd(bid.charged_micro_usd), 2)}`}</td>
-    <td className="px-4 py-3 text-right">{bid.status === "open" && <button disabled={busy} onClick={() => onCancel(bid.id)} className="text-muted transition hover:text-foreground">Cancel</button>}</td>
+    <td className="px-4 py-3 font-mono">{bid.status === "open" ? "—" : `${bid.filled_units} IU · ${fmtUSD(usd(bid.charged), 2)}`}</td>
+    <td className="px-4 py-3 text-right">{canCancel && <button disabled={busy} onClick={onCancel} className="text-muted transition hover:text-foreground">Cancel</button>}</td>
   </tr>;
 }
 

@@ -25,14 +25,3 @@ export async function view<T>(chain: ChainInfo, contract: string, method: string
   if (error) throw new Error(typeof error === "string" ? error : error.data ?? error.message ?? "NEAR RPC error");
   return JSON.parse(new TextDecoder().decode(new Uint8Array(body.result.result)));
 }
-
-export async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-/// A gateway API key in the same format the gateway issues. Only its hash goes on chain.
-export function newApiKey(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return `ek_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-}

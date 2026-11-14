@@ -6,11 +6,11 @@ import { useWallet } from "@/components/WalletProvider";
 import { Wordmark } from "@/components/Logo";
 
 const NAV = [
+  { href: "/dashboard/how-it-works", label: "How it works", icon: GuideIcon },
   { href: "/dashboard/market", label: "Market", icon: MarketIcon },
-  { href: "/dashboard/onchain", label: "On-chain", icon: ChainIcon },
   { href: "/dashboard/playground", label: "Playground", icon: RouterIcon },
   { href: "/dashboard/api-keys", label: "API Keys", icon: KeyIcon },
-  { href: "/dashboard/settings", label: "Settings", icon: SettingsIcon },
+  { href: "/dashboard/account", label: "Account", icon: AccountIcon },
 ];
 
 export default function Sidebar() {
@@ -85,20 +85,21 @@ function MarketIcon() {
   );
 }
 
-function ChainIcon() {
+function GuideIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-      <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
-      <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.5 9.5a2.5 2.5 0 0 1 5 0c0 1.7-2.5 2-2.5 4" />
+      <path d="M12 17h.01" />
     </svg>
   );
 }
 
-function SettingsIcon() {
+function AccountIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 20c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5" />
     </svg>
   );
 }
