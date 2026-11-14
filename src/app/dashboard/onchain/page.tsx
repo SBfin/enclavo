@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import PageHeader from "@/components/PageHeader";
 import { useCatalog } from "@/lib/use-catalog";
-import { useNearWallet } from "@/lib/use-near-wallet";
+import { useWallet } from "@/components/WalletProvider";
 import { fmtTokens, fmtUSD } from "@/lib/market";
 import { PLAIN_CALL, TOKEN_CALL, USD, newApiKey, sha256Hex, usd, view, type ChainAuction, type ChainBid, type ChainEntitlement } from "@/lib/near";
 
@@ -14,7 +14,8 @@ export default function OnchainPage() {
   const { models, status, loading, error: catalogError } = useCatalog();
   const chain = status?.chain ?? null;
   const contract = chain?.auction_contract ?? "";
-  const { ready, accountId, connect, disconnect, call } = useNearWallet(chain?.network);
+  // The same wallet connection the rest of the app signs in with.
+  const { ready, walletAccount: accountId, connect, signOut: disconnect, call } = useWallet();
   const [data, setData] = useState<Snapshot>(EMPTY);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [now, setNow] = useState(0);

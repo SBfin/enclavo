@@ -3,18 +3,17 @@ import { test } from 'node:test';
 import { GET } from '../src/app/api/health/ready/route.ts';
 
 test('readiness fails closed on missing configuration and upstream failures, without leaking details', async (t) => {
-  const names = ['NEXT_PUBLIC_PRIVY_APP_ID', 'PRIVY_APP_SECRET', 'ENCLAVO_GATEWAY_URL'];
+  const names = ['ENCLAVO_CONTROL_TOKEN', 'ENCLAVO_GATEWAY_URL'];
   const saved = names.map(name => process.env[name]);
   t.after(() => names.forEach((name, i) => {
     if (saved[i] === undefined) delete process.env[name];
     else process.env[name] = saved[i];
   }));
   const request = () => new Request('https://enclavo.example/api/health/ready');
-  delete process.env.PRIVY_APP_SECRET;
+  delete process.env.ENCLAVO_CONTROL_TOKEN;
   const unavailable = await GET(request());
   assert.equal(unavailable.status, 503);
-  process.env.NEXT_PUBLIC_PRIVY_APP_ID = 'test-public-app';
-  process.env.PRIVY_APP_SECRET = 'test-server-secret';
+  process.env.ENCLAVO_CONTROL_TOKEN = 'test-control-token';
   process.env.ENCLAVO_GATEWAY_URL = 'http://gateway.internal:8080';
   t.mock.method(globalThis, 'fetch', async (url, init) => {
     assert.equal(url.href, 'http://gateway.internal:8080/readyz');

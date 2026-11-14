@@ -1,9 +1,9 @@
 "use client";
 import Link from "next/link";
 import { useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { usePrivy } from "@privy-io/react-auth";
 import PageHeader from "@/components/PageHeader";
 import { useAccount } from "@/components/AccountProvider";
+import { useWallet } from "@/components/WalletProvider";
 import { useCatalog, type GatewayModel } from "@/lib/use-catalog";
 import { useMarket, type Auction, type Bid } from "@/lib/use-market";
 import { fmtUSD, fmtTokens } from "@/lib/market";
@@ -55,7 +55,7 @@ const STEPS = [
 ] as const;
 
 export default function MarketPage() {
-  const { login } = usePrivy();
+  const { signIn } = useWallet();
   const { account, signedIn, api, refresh: refreshAccount } = useAccount();
   const { models, status, loading, error: catalogError } = useCatalog();
   const { auctions, bids, contracts, error: marketError, refresh } = useMarket();
@@ -151,7 +151,7 @@ export default function MarketPage() {
     <section className="mt-6 grid grid-cols-2 border border-line md:grid-cols-4">
       <Tile label="Open auctions" value={String(open.length)} hint={`${models.length} live models`} />
       <Tile label="Capacity offered" value={fmtTokens(open.reduce((sum, a) => sum + a.units, 0))} hint="IU / day across open lots" />
-      <Tile label="Available credit" value={fmtUSD(available, 2)} hint={signedIn ? "Your account" : "Sign in to trade"} />
+      <Tile label="Available credit" value={fmtUSD(available, 2)} hint={signedIn ? "Your account" : "Connect a wallet to trade"} />
       <Tile label="Held for bids" value={fmtUSD(usd(account?.held_micro_usd || 0), 2)} hint="Released if you don't win" />
     </section>
 
@@ -212,7 +212,7 @@ export default function MarketPage() {
           </dl>
           {!belowReserve && !fitsAtReserve && <p className="mt-2 text-xs text-muted">Demand would exceed the lot, so the price depends on other sealed bids. You may also get only part of your quantity.</p>}
 
-          {!signedIn ? <button onClick={login} className="mt-6 w-full rounded-md bg-foreground py-3 text-sm font-medium text-background">Sign in to bid</button>
+          {!signedIn ? <button onClick={() => void signIn()} className="mt-6 w-full rounded-md bg-foreground py-3 text-sm font-medium text-background">Connect NEAR wallet to bid</button>
             : !account ? <Link href="/dashboard/api-keys" className="mt-6 block rounded-md bg-foreground py-3 text-center text-sm font-medium text-background">Connect your account</Link>
             : <>
               <button disabled={busy || belowReserve || !(held > 0) || available < held} onClick={() => confirmBid ? placeBid() : setConfirmBid(true)} className="mt-6 w-full rounded-md bg-foreground py-3 text-sm font-medium text-background transition hover:bg-accent disabled:opacity-40">
@@ -233,7 +233,7 @@ export default function MarketPage() {
           <thead><tr className="border-b border-line"><th className="label px-4 py-3 font-normal">Auction</th><th className="label px-4 py-3 font-normal">Quantity</th><th className="label px-4 py-3 font-normal">Max / IU-day</th><th className="label px-4 py-3 font-normal">Status</th><th className="label px-4 py-3 font-normal">Won · paid</th><th /></tr></thead>
           <tbody>{bids.map((bid) => <BidRow key={bid.id} bid={bid} name={nameFor(bid.route_id)} now={now} busy={busy} onCancel={cancel} />)}</tbody>
         </table>
-        {!bids.length && <p className="p-5 text-sm text-muted">{signedIn ? "No bids yet. Pick an open auction above." : "Sign in to see your bids."}</p>}
+        {!bids.length && <p className="p-5 text-sm text-muted">{signedIn ? "No bids yet. Pick an open auction above." : "Connect your NEAR wallet to see your bids."}</p>}
       </div>
     </section>
 

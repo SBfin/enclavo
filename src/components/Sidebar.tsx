@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { usePrivy } from "@privy-io/react-auth";
+import { useWallet } from "@/components/WalletProvider";
 import { Wordmark } from "@/components/Logo";
 
 const NAV = [
@@ -15,8 +15,9 @@ const NAV = [
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { authenticated, user, logout, login } = usePrivy();
-  const identity = user?.email?.address ?? user?.google?.email ?? shortAddress(user?.wallet?.address) ?? "Signed in";
+  const { session, signIn, signOut, busy, network } = useWallet();
+  const authenticated = Boolean(session);
+  const identity = session ?? "";
 
   return (
     <aside className="flex shrink-0 flex-col border-line max-md:border-b md:sticky md:top-0 md:h-dvh md:w-60 md:border-r">
@@ -45,13 +46,14 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {!authenticated && <button type="button" onClick={login} className="m-4 rounded-md bg-foreground px-4 py-2 text-sm text-background">Sign in</button>}
+      {!authenticated && <button type="button" disabled={busy} onClick={() => void signIn()} className="m-4 rounded-md bg-foreground px-4 py-2 text-sm text-background disabled:opacity-50">{busy ? "Waiting for wallet…" : "Connect NEAR wallet"}</button>}
 
       <div className={`border-t border-line px-5 py-4 ${authenticated ? "hidden md:block" : "hidden"}`}>
-        <div className="truncate text-sm" title={identity}>
+        <div className="label">NEAR {network}</div>
+        <div className="mt-1 truncate text-sm" title={identity}>
           {identity}
         </div>
-        <button type="button" onClick={logout} className="mt-1 text-sm text-muted transition hover:text-foreground">
+        <button type="button" onClick={() => void signOut()} className="mt-1 text-sm text-muted transition hover:text-foreground">
           Sign out
         </button>
       </div>
@@ -61,10 +63,6 @@ export default function Sidebar() {
 
 function KeyIcon() {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><circle cx="8" cy="8" r="4"/><path d="m11 11 9 9m-3-3 3-3m-6 0 3-3"/></svg>;
-}
-
-function shortAddress(address?: string) {
-  return address ? `${address.slice(0, 6)}…${address.slice(-4)}` : undefined;
 }
 
 function RouterIcon() {

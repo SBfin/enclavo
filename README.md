@@ -5,15 +5,15 @@ page, Playground is the second tab, and API Keys manages application access to t
 
 ## Run locally
 
-Add `NEXT_PUBLIC_PRIVY_APP_ID`, `PRIVY_APP_SECRET`, and a funded `NEAR_AI_API_KEY` to `.env`
-(see `.env.example`), then run:
+Add a funded `NEAR_AI_API_KEY` to `.env` (see `.env.example`), then run:
 
 ```sh
 docker compose up --build -d
 ```
 
 Open http://localhost:3001. Anyone can browse Market; placing bids, using Playground, and managing
-keys require Privy sign-in. The default stack uses live NEAR AI inference, not test providers.
+keys require signing in with a NEAR wallet (testnet by default). The wallet signs a NEP-413 message;
+no transaction is sent. The default stack uses live NEAR AI inference, not test providers.
 
 All ready confidential chat models with supported flat token pricing are discovered from NEAR AI
 at startup. Their real IDs, descriptions, context windows, capabilities, and separate input/output
@@ -55,7 +55,7 @@ two do not share auctions, bids or balances.
 - **Gateway mirror** (`gateway/src/chain.rs`): with `ENCLAVO_AUCTION_CONTRACT` set, the gateway
   reads finalized contract state every ten seconds and turns entitlements into capacity
   contracts. A wallet authorizes an API key by publishing its SHA-256 hash on chain; the gateway
-  then serves that wallet's capacity to the key. No Enclavo account or Privy sign-in is involved.
+  then serves that wallet's capacity to the key. No Enclavo account or dashboard sign-in is involved.
 - **On-chain page** (`/dashboard/onchain`): connect a NEAR wallet, get test mUSDC, bid, cancel,
   settle a closed auction, withdraw, and authorize an API key.
 
@@ -110,9 +110,11 @@ if provider prices change. There is no automatic supplier purchase or GPU reserv
 | Readiness / metrics | http://localhost:8088/readyz · http://localhost:9091/metrics |
 
 Chat, streaming, account, contracts, files, and batches use gateway bearer keys. Dashboard account,
-key, bid, and Playground operations verify the Privy token in Next.js and forward only the verified
-identity over an authenticated server-to-server channel. A dedicated `ENCLAVO_CONTROL_TOKEN` can be
-configured; otherwise a domain-separated token is derived from `PRIVY_APP_SECRET` server-side. Browser
+key, bid, and Playground operations use a session that Next.js issues after verifying a NEAR wallet's
+NEP-413 signature over a single-use challenge and checking on chain that the signing key is a
+full-access key of the account. Next.js forwards only the verified `near:<account>` identity over an
+authenticated server-to-server channel keyed by `ENCLAVO_CONTROL_TOKEN`, which web and gateway must
+share; sessions and challenges are keyed from the same secret under separate labels. Browser
 requests cannot set the trusted identity or access the channel secret. Anonymous account operations fail
 closed. Customer accounts and all market state persist across restarts.
 
@@ -163,15 +165,15 @@ and [managed PostgreSQL](https://fly.io/mpg/).
 
 The templates are `fly.staging.toml` for web and `gateway/fly.staging.toml` for the gateway.
 `fly.production.toml` and its gateway counterpart use separate production app names. Start with
-staging; use a separate Privy app, provider credential, control token and database for production.
+staging; use a separate provider credential, control token and database for production. Production
+builds sign in with NEAR mainnet wallets (`NEXT_PUBLIC_NEAR_NETWORK` in the manifest's build args).
 These files provision nothing until deployment commands are run. Fly infrastructure and NEAR usage
 are billable; no auction is published and no customer credit is issued during deployment.
 
 ### Rehearse the production images locally
 
 Set `STAGING_CONTROL_TOKEN` in `.env` to a new random value (`openssl rand -hex 32`), alongside
-the existing Privy and NEAR configuration. Add `http://localhost:3002` to the Privy app's allowed
-origins to exercise sign-in. Then run:
+the existing NEAR AI configuration. Sign in at `http://localhost:3002` with a NEAR testnet wallet. Then run:
 
 ```sh
 docker compose -f compose.staging.yaml up --build --wait --wait-timeout 180
@@ -193,7 +195,6 @@ docker compose -f compose.staging.yaml down
    Select the organization that will own billing. The following steps create paid resources.
 2. Choose globally unique web/gateway names. Update `app` in both staging manifests,
    `ENCLAVO_GATEWAY_URL` in the web manifest, and `ENCLAVO_PUBLIC_URL` in the gateway manifest.
-   Use the resulting public HTTPS origin in the staging Privy app's allowed origins.
 3. Create the two apps and managed database. Replace names and `YOUR_ORG` below with your choices:
 
 ```sh
@@ -212,8 +213,6 @@ Create two local secret files outside the repository, restrict them with `chmod 
 
 | Variable | Web secret file | Gateway secret file |
 | --- | --- | --- |
-| `NEXT_PUBLIC_PRIVY_APP_ID` | Staging public app ID | — |
-| `PRIVY_APP_SECRET` | Staging Privy secret | — |
 | `ENCLAVO_CONTROL_TOKEN` | New random token | Same token |
 | `NEAR_AI_API_KEY` | — | Funded staging provider key |
 | `DATABASE_URL` | — | Direct managed PostgreSQL TLS URL |
@@ -234,11 +233,11 @@ cd gateway
 fly config validate --strict -c fly.staging.toml
 fly deploy -c fly.staging.toml --ha=false --no-public-ips
 cd ..
-fly deploy -c fly.staging.toml --ha=false --build-arg NEXT_PUBLIC_PRIVY_APP_ID=YOUR_STAGING_PRIVY_APP_ID
+fly deploy -c fly.staging.toml --ha=false
 ```
 
-The public Privy app ID is required at **build time** and must match the web runtime configuration;
-changing it requires a rebuild. No secret belongs in build arguments. The gateway release command
+The NEAR network is fixed at **build time** by the manifest's build args; changing it requires a
+rebuild. No secret belongs in build arguments. The gateway release command
 runs `enclavo-gateway --migrate` before replacing the service and stops deployment on failure.
 Startup also checks migrations. Use additive, backward-compatible migrations while old and new
 versions overlap. Both services run as non-root users; the gateway binds `[::]:8080` so private
@@ -263,13 +262,13 @@ After changing names/domains, update all corresponding URLs and repeat the check
 ### Verify and recover
 
 The read-only smoke command checks pages, assets, model discovery, readiness, public auctions and
-anonymous rejection of private account operations. Then verify Privy sign-in, create/copy/revoke a
+anonymous rejection of private account operations. Then verify NEAR wallet sign-in, create/copy/revoke a
 key, and confirm that the revoked key is rejected. Paid inference and actual auction publication
 are separate operator actions. Do not open paid bidding until the funded customer flow has passed.
 
 Keep the previous web/gateway image references from `fly releases --image` for rollback. Redeploy a
 known-good image with `fly deploy -c fly.staging.toml --image IMAGE_REFERENCE` from the matching
-directory. The web image retains its original public Privy app ID. Image rollback does not undo
+directory. The web image retains the NEAR network it was built for. Image rollback does not undo
 database migrations; restore data separately when needed.
 
 Before inviting customers, confirm managed backups and perform a restore drill into a **new**
@@ -277,7 +276,7 @@ cluster using `fly mpg restore` (see [backup/restore commands](https://fly.io/do
 Use `fly mpg connect` on the restored cluster and compare account balances, bids, contracts and
 usage with read-only queries. Do not start the normal gateway against a recovery copy: its workers
 resume batches and auction settlement automatically. Never overwrite the live ledger during a drill.
-Cloud backup recovery, DNS, private networking and live Privy sign-in require validation after
+Cloud backup recovery, DNS, private networking and live wallet sign-in require validation after
 actual provisioning. Platform-side `fly config validate --strict` also requires an authenticated
 Fly account; local manifest parsing is not a substitute for that check.
 

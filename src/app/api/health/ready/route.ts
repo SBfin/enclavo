@@ -1,7 +1,7 @@
 // This probe checks the private gateway and its database without making an inference request.
 export async function GET(request: Request) {
   const headers = { "cache-control": "no-store" };
-  if (!process.env.NEXT_PUBLIC_PRIVY_APP_ID || !process.env.PRIVY_APP_SECRET) {
+  if (!process.env.ENCLAVO_CONTROL_TOKEN) {
     return Response.json({ status: "unavailable" }, { status: 503, headers });
   }
   try {

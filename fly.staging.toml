@@ -1,4 +1,4 @@
-# Deploy from repository root; supply --build-arg NEXT_PUBLIC_PRIVY_APP_ID=YOUR_APP_ID.
+# Deploy from repository root: fly deploy -c fly.staging.toml. Sign-in uses NEAR testnet wallets.
 # Change both app names/URLs if these globally unique Fly names are unavailable.
 app = "enclavo-web-staging"
 primary_region = "fra"
@@ -8,6 +8,9 @@ kill_timeout = 300
 [build]
   dockerfile = "Dockerfile"
   build-target = "production"
+
+[build.args]
+  NEXT_PUBLIC_NEAR_NETWORK = "testnet"
 
 [env]
   ENCLAVO_GATEWAY_URL = "http://enclavo-gateway-staging.internal:8080"

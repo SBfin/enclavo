@@ -1,6 +1,6 @@
 FROM node:24-slim AS development
 
-# Privy's dependencies include native modules that compile on Linux ARM64.
+# Some dependencies include native modules that compile on Linux ARM64.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
@@ -14,14 +14,14 @@ RUN npm ci
 
 FROM dependencies AS builder
 # Public browser configuration is embedded by Next.js at build time. Never pass secrets here.
-ARG NEXT_PUBLIC_PRIVY_APP_ID
-ENV NEXT_PUBLIC_PRIVY_APP_ID=$NEXT_PUBLIC_PRIVY_APP_ID \
+ARG NEXT_PUBLIC_NEAR_NETWORK=testnet
+ENV NEXT_PUBLIC_NEAR_NETWORK=$NEXT_PUBLIC_NEAR_NETWORK \
     NEXT_TELEMETRY_DISABLED=1 \
     RAYON_NUM_THREADS=2 \
     TOKIO_WORKER_THREADS=2
 COPY src ./src
 COPY next.config.ts tsconfig.json ./
-RUN test -n "$NEXT_PUBLIC_PRIVY_APP_ID" && npm run build
+RUN npm run build
 
 FROM node:24-slim AS production
 WORKDIR /app

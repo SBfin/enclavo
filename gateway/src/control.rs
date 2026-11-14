@@ -14,12 +14,7 @@ use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
 pub fn configured_token_hash() -> Option<[u8; 32]> {
-    let token = std::env::var("ENCLAVO_CONTROL_TOKEN").ok().filter(|s| !s.is_empty()).or_else(|| {
-        std::env::var("PRIVY_APP_SECRET")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .map(|secret| hex::encode(Sha256::digest(format!("enclavo:control:v1:{secret}"))))
-    })?;
+    let token = std::env::var("ENCLAVO_CONTROL_TOKEN").ok().filter(|s| !s.is_empty())?;
     Some(token_hash(&token))
 }
 pub fn token_hash(token: &str) -> [u8; 32] {

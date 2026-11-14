@@ -1,7 +1,7 @@
 # Live Enclavo stack:
 #   docker compose up --build -d          dashboard + gateway + Postgres (requires NEAR_AI_API_KEY)
 #   gateway/scripts/smoke.sh               exercise every flow against it
-#   The dashboard needs Privy keys in .env (see .env.example).
+#   Sign in to the dashboard with a NEAR testnet wallet.
 #   docker compose down -v                 stop and wipe the database
 # Ports are offset from the defaults (8088, 5433, 3001) so they don't clash with local services.
 
@@ -35,6 +35,8 @@ services:
       RUST_LOG: ${RUST_LOG:-info}
       # NEAR auction contract to mirror; set it empty in .env to run without the chain.
       ENCLAVO_AUCTION_CONTRACT: ${ENCLAVO_AUCTION_CONTRACT-enclavo-auction.testnet}
+      # Dashboard → gateway channel; also keys NEAR sign-in sessions. Local default only.
+      ENCLAVO_CONTROL_TOKEN: ${ENCLAVO_CONTROL_TOKEN:-local-development-control-token}
     env_file:
       - path: .env
         required: false
@@ -60,6 +62,7 @@ services:
       RAYON_NUM_THREADS: "2"
       TOKIO_WORKER_THREADS: "2"
       ENCLAVO_GATEWAY_URL: http://gateway:8080
+      ENCLAVO_CONTROL_TOKEN: ${ENCLAVO_CONTROL_TOKEN:-local-development-control-token}
     working_dir: /app
     command: sh -c "npm ci && npm run dev -- -H 0.0.0.0 -p 3000"
     env_file:

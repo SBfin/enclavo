@@ -40,10 +40,8 @@ services:
       context: .
       target: production
       args:
-        NEXT_PUBLIC_PRIVY_APP_ID: ${NEXT_PUBLIC_PRIVY_APP_ID:?Set NEXT_PUBLIC_PRIVY_APP_ID}
+        NEXT_PUBLIC_NEAR_NETWORK: testnet
     environment:
-      NEXT_PUBLIC_PRIVY_APP_ID: ${NEXT_PUBLIC_PRIVY_APP_ID}
-      PRIVY_APP_SECRET: ${PRIVY_APP_SECRET:?Set PRIVY_APP_SECRET}
       ENCLAVO_GATEWAY_URL: http://gateway:8080
       ENCLAVO_CONTROL_TOKEN: ${STAGING_CONTROL_TOKEN}
     ports:

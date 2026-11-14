@@ -1,12 +1,11 @@
 import "server-only";
-import { createHash } from "node:crypto";
-import { userIdFrom } from "@/lib/privy-server";
+import { controlToken, sameOrigin, userIdFrom } from "@/lib/near-auth";
 
 export async function dashboardRequest(request: Request, path: string): Promise<Response> {
-  const userId = await userIdFrom(request);
-  if (!userId) return Response.json({ error: { message: "Sign in to access your Enclavo account." } }, { status: 401 });
-  const secret = process.env.PRIVY_APP_SECRET;
-  const token = process.env.ENCLAVO_CONTROL_TOKEN || (secret ? createHash("sha256").update(`enclavo:control:v1:${secret}`).digest("hex") : null);
+  if (!sameOrigin(request)) return Response.json({ error: { message: "Cross-site request refused." } }, { status: 403 });
+  const userId = userIdFrom(request);
+  if (!userId) return Response.json({ error: { message: "Connect your NEAR wallet to access your Enclavo account." } }, { status: 401 });
+  const token = controlToken();
   if (!token) return Response.json({ error: { message: "Account management is not configured." } }, { status: 503 });
   const headers = new Headers({ authorization: `Bearer ${token}`, "x-enclavo-user-id": userId });
   for (const name of ["content-type", "accept"]) {
