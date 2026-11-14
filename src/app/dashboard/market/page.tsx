@@ -7,10 +7,11 @@ import { useCatalog, type GatewayModel } from "@/lib/use-catalog";
 import { useAuctionBids, useChainMarket } from "@/lib/use-chain-market";
 import { clearBook, type BookBid } from "@/lib/order-book";
 import OrderBook from "@/components/OrderBook";
+import AuctionListing from "@/components/AuctionListing";
 import { useMarket } from "@/lib/use-market";
 import { usd, type ChainAuction, type ChainBid } from "@/lib/near";
 import { fmtUSD, fmtTokens } from "@/lib/market";
-import { IU_NOTE, STEPS } from "@/lib/how-it-works";
+import { DEFAULT_FILTERS, countByStatus, filterAuctions, phase, timeLeft, type Filters } from "@/lib/auction-listing";
 
 // A one-second clock for countdowns. It reads 0 during prerendering and hydration, so
 // time-dependent text only appears once the page is running in the browser.
@@ -23,7 +24,7 @@ function subscribeClock(onTick: () => void) {
 const useNow = () => useSyncExternalStore(subscribeClock, () => clock, () => 0);
 
 // The open tab lives in the URL hash, so a link or a reload lands on the same tab.
-const TABS = ["auctions", "bids", "capacity", "settled", "models"] as const;
+const TABS = ["auctions", "bids", "capacity", "models"] as const;
 type Tab = (typeof TABS)[number];
 const tabListeners = new Set<() => void>();
 function subscribeTab(onChange: () => void) {
@@ -42,24 +43,6 @@ function showTab(tab: Tab) {
 }
 const useTab = () => useSyncExternalStore(subscribeTab, readTab, (): Tab => "auctions");
 
-function timeLeft(endsAtMs: number, now: number): string {
-  if (!now) return "…";
-  const ms = endsAtMs - now;
-  if (ms <= 0) return "closed";
-  const s = Math.floor(ms / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
-  if (d >= 1) return `${d}d ${h % 24}h`;
-  if (h >= 1) return `${h}h ${m % 60}m`;
-  if (m >= 1) return `${m}m ${s % 60}s`;
-  return `${s}s`;
-}
-
-function demand(auction: ChainAuction): { tone: "muted" | "good" | "warn"; text: string } {
-  if (auction.open_bid_units === 0) return { tone: "muted", text: "No bids yet. Any bid at or above the reserve would currently win and pay the reserve." };
-  if (auction.open_bid_units <= auction.units)
-    return { tone: "good", text: `${auction.units - auction.open_bid_units} of ${auction.units} IU/day still unclaimed. If it closed now, winners would pay the reserve.` };
-  return { tone: "warn", text: `Oversubscribed: ${auction.open_bid_units} IU/day bid for ${auction.units}. Highest bids win, and everyone pays the lowest winning bid.` };
-}
-
 const BID_STATUS: Record<string, { label: string; tone: string; detail: string }> = {
   open: { label: "Waiting", tone: "text-accent", detail: "Escrowed until the auction is settled. You can cancel while it's open." },
   filled: { label: "Won", tone: "text-good", detail: "Filled in full. See the Your capacity tab." },
@@ -77,6 +60,7 @@ export default function MarketPage() {
   const now = useNow();
   const tab = useTab();
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [units, setUnits] = useState(1);
   const [price, setPrice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -87,9 +71,10 @@ export default function MarketPage() {
   const nameFor = (routeId: string) => modelFor(routeId)?.name || routeId.replace(/@.*$/, "");
   const accepting = (a: ChainAuction) => a.status === "open" && (!now || now < a.ends_at_ms);
   const open = useMemo(() => market.auctions.filter((a) => a.status === "open" && (!now || now < a.ends_at_ms)).sort((a, b) => a.ends_at_ms - b.ends_at_ms), [market.auctions, now]);
-  const awaiting = market.auctions.filter((a) => a.status === "open" && now > 0 && now >= a.ends_at_ms);
-  const cleared = market.auctions.filter((a) => a.status === "cleared").sort((a, b) => (b.cleared_at_ms ?? 0) - (a.cleared_at_ms ?? 0));
-  const auction = open.find((a) => a.id === selectedId) || open[0];
+  const counts = countByStatus(market.auctions, now);
+  const listed = filterAuctions(market.auctions, filters, now, nameFor);
+  // The bid panel follows the auction picked in the list, else the first open one listed.
+  const auction = open.find((a) => a.id === selectedId) ?? listed.find((a) => phase(a, now) === "open");
 
   const reserve = auction ? usd(auction.reserve_price) : 0;
   const effectivePrice = price || (auction ? String(reserve) : "");
@@ -113,7 +98,9 @@ export default function MarketPage() {
   const activeContracts = contracts.filter((c) => c.active);
   const syncing = market.entitlements.filter((e) => !syncedIds.has(e.id) && e.ends_at_ms > (now || 0));
 
-  function select(id: number) { setSelectedId(id); setUnits(1); setPrice(""); setNotice(null); setFailure(null); showTab("auctions"); }
+  function select(id: number) { setSelectedId(id); setUnits(1); setPrice(""); setNotice(null); setFailure(null); }
+  /** From the Models tab: list that model's open auctions and pick the first. */
+  function bidOn(routeId: string, id: number) { setFilters({ ...DEFAULT_FILTERS, route: routeId }); select(id); showTab("auctions"); }
 
   async function run(done: string, action: () => Promise<unknown>) {
     setBusy(true); setFailure(null); setNotice(null);
@@ -140,65 +127,19 @@ export default function MarketPage() {
     </section>
 
     <TabBar current={tab} onSelect={showTab} tabs={[
-      { id: "auctions", label: "Auctions", count: open.length, flag: awaiting.length ? `${awaiting.length} closed, ready to settle` : undefined },
+      { id: "auctions", label: "Auctions", count: open.length, flag: counts.closed ? `${counts.closed} closed, ready to settle` : undefined },
       { id: "bids", label: "Your bids", count: session ? market.bids.filter((b) => b.status === "open").length : undefined },
       { id: "capacity", label: "Your capacity", count: session ? activeContracts.length + syncing.length : undefined, flag: syncing.length ? "won capacity syncing" : undefined },
-      { id: "settled", label: "Settled", count: cleared.length },
       { id: "models", label: "Models", count: models.length },
     ]} />
 
     <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} className="mt-6">
       {tab === "auctions" && <>
-        <section aria-labelledby="how-it-works" className="border border-line">
-          <h2 id="how-it-works" className="sr-only">How auctions work</h2>
-          <ol className="grid md:grid-cols-4">
-            {STEPS.map(({ title, text }, i) => <li key={title} className="border-line p-4 max-md:[&:not(:first-child)]:border-t md:[&:not(:first-child)]:border-l">
-              <div className="flex items-baseline gap-2"><span className="font-mono text-xs text-accent">{i + 1}</span><span className="text-sm font-medium">{title}</span></div>
-              <p className="mt-2 text-xs leading-5 text-muted">{text}</p>
-            </li>)}
-          </ol>
-          <p className="flex flex-wrap justify-between gap-2 border-t border-line px-4 py-2 text-xs text-muted"><span>{IU_NOTE}</span><Link href="/dashboard/how-it-works" className="text-accent">How pricing works →</Link></p>
-        </section>
-
-        <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_340px]">
-          <section className="min-w-0">
-            <h2 className="mb-3 text-lg font-medium">Open auctions</h2>
-            {!open.length && <p className="border border-dashed border-line p-5 text-sm text-muted">{!market.loaded ? "Reading the auction contract…" : "No auctions are open right now. New lots of capacity are published on chain; check back soon."}</p>}
-            <ul className="space-y-3">
-              {open.map((a) => {
-                const selected = a.id === auction?.id;
-                const state = demand(a);
-                return <li key={a.id}>
-                  <button type="button" aria-pressed={selected} onClick={() => select(a.id)} className={`w-full border p-4 text-left transition ${selected ? "border-accent bg-white/[0.05]" : "border-line hover:bg-white/[0.03]"}`}>
-                    <div className="flex flex-wrap items-baseline justify-between gap-2">
-                      <span className="font-medium">{nameFor(a.route_id)}</span>
-                      <span className="font-mono text-xs text-muted">closes in <span className="text-foreground tnum">{timeLeft(a.ends_at_ms, now)}</span></span>
-                    </div>
-                    <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
-                      <Fact label="Lot" value={`${a.units} IU/day`} sub={`${fmtTokens(a.units * a.tokens_per_iu)} tokens/day`} />
-                      <Fact label="Term" value={`${a.term_days} days`} sub="starts when settled" />
-                      <Fact label="Reserve" value={fmtUSD(usd(a.reserve_price), 2)} sub="min $ / IU-day" />
-                    </div>
-                    <div className="mt-4">
-                      <div className="flex justify-between text-xs text-muted"><span>Demand</span><span className="tnum">{a.open_bid_units} / {a.units} IU/day · {a.open_bids} {a.open_bids === 1 ? "bid" : "bids"}</span></div>
-                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/[0.08]"><div className={`h-full ${state.tone === "warn" ? "bg-warn" : "bg-good"}`} style={{ width: `${Math.min(a.open_bid_units / a.units, 1) * 100}%` }} /></div>
-                      <p className={`mt-2 text-xs ${state.tone === "warn" ? "text-warn" : state.tone === "good" ? "text-good" : "text-muted"}`}>{state.text}</p>
-                    </div>
-                  </button>
-                  {selected && <div className="mt-2"><OrderBook book={book} lot={a.units} reserve={Number(a.reserve_price)} loaded={auctionBids.loaded} /></div>}
-                </li>;
-              })}
-            </ul>
-
-            {awaiting.length > 0 && <div className="mt-8">
-              <h2 className="mb-3 text-lg font-medium">Closed · ready to settle</h2>
-              <ul className="space-y-3">{awaiting.map((a) => <li key={a.id} className="flex flex-wrap items-center justify-between gap-3 border border-line p-4">
-                <div><div className="font-medium">{nameFor(a.route_id)}</div><div className="text-xs text-muted">{a.units} IU/day · {a.term_days} days · {a.open_bid_units} IU/day bid by {a.open_bids} {a.open_bids === 1 ? "bidder" : "bidders"}</div></div>
-                <button disabled={busy || !session} onClick={() => void run("Auction settled. Winners now hold capacity; unspent escrow is unlocked.", () => market.settle(a.id))} className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background disabled:opacity-40">Settle now</button>
-              </li>)}</ul>
-              <p className="mt-2 text-xs text-muted">Settling runs the clearing on chain. Anyone with a connected wallet can do it, for a small gas fee.</p>
-            </div>}
-          </section>
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_340px]">
+          <AuctionListing auctions={market.auctions} listed={listed} counts={counts} now={now} loaded={market.loaded} nameOf={nameFor}
+            filters={filters} onFilters={setFilters} selectedId={auction?.id ?? null} onSelect={select}
+            expanded={auction && <OrderBook book={book} lot={auction.units} reserve={Number(auction.reserve_price)} loaded={auctionBids.loaded} />}
+            canSettle={Boolean(session)} busy={busy} onSettle={(id) => void run("Auction settled. Winners now hold capacity; unspent escrow is unlocked.", () => market.settle(id))} />
 
           <aside className="h-fit border border-line bg-panel p-5 lg:sticky lg:top-6">
             {!auction ? <>
@@ -271,25 +212,6 @@ export default function MarketPage() {
           {!activeContracts.length && !syncing.length && <p className="border border-line p-5 text-sm text-muted">{session ? "Capacity you win appears here once its auction is settled." : "Connect your wallet to see the capacity you own."}</p>}
         </section>
       </>}
-      {tab === "settled" && <>
-        <section aria-label="Settled auctions">
-          {!cleared.length && <p className="border border-line p-5 text-sm text-muted">{market.loaded ? "No auction has been settled yet." : "Reading the auction contract…"}</p>}
-          {cleared.length > 0 && <>
-            <div className="overflow-x-auto border border-line">
-              <table className="w-full min-w-[620px] text-left text-sm">
-                <thead><tr className="border-b border-line"><th className="label px-4 py-3 font-normal">Auction</th><th className="label px-4 py-3 font-normal">Sold</th><th className="label px-4 py-3 font-normal">Reserve</th><th className="label px-4 py-3 font-normal">Clearing price</th><th className="label px-4 py-3 font-normal">Settled</th></tr></thead>
-                <tbody>{cleared.slice(0, 50).map((a) => <tr key={a.id} className="border-b border-line last:border-0">
-                  <td className="px-4 py-3">{nameFor(a.route_id)}<div className="text-xs text-muted">#{a.id} · {a.term_days} days</div></td>
-                  <td className="px-4 py-3 font-mono">{a.filled_units} / {a.units} IU/day</td>
-                  <td className="px-4 py-3 font-mono">{fmtUSD(usd(a.reserve_price), 2)}</td>
-                  <td className="px-4 py-3 font-mono">{a.clearing_price ? fmtUSD(usd(a.clearing_price), 2) : <span className="font-sans text-muted">No winning bids</span>}</td>
-                  <td className="px-4 py-3 text-muted">{a.cleared_at_ms ? new Date(a.cleared_at_ms).toLocaleString() : "—"}</td>
-                </tr>)}</tbody>
-              </table>
-            </div>
-          </>}
-        </section>
-      </>}
       {tab === "models" && <>
         <section aria-label="Models and token prices" className="border border-line">
           <div className="overflow-x-auto p-4">
@@ -302,7 +224,7 @@ export default function MarketPage() {
                   <td className="px-3 py-2 font-mono text-xs text-muted">{item.context_length ? fmtTokens(item.context_length) : "—"}</td>
                   <td className="px-3 py-2 text-right font-mono">{fmtUSD(item.input_price_per_million_tokens_usd, 2)}</td>
                   <td className="px-3 py-2 text-right font-mono">{fmtUSD(item.price_per_million_tokens_usd, 2)}</td>
-                  <td className="px-3 py-2 text-right">{first ? <button onClick={() => select(first.id)} className="text-accent">{open.filter((a) => a.route_id === item.id).length} · bid →</button> : <span className="text-muted">—</span>}</td>
+                  <td className="px-3 py-2 text-right">{first ? <button onClick={() => bidOn(item.id, first.id)} className="text-accent">{open.filter((a) => a.route_id === item.id).length} · bid →</button> : <span className="text-muted">—</span>}</td>
                 </tr>;
               })}</tbody>
             </table>
@@ -360,10 +282,6 @@ function TabBar({ tabs, current, onSelect }: { tabs: TabSpec[]; current: Tab; on
       </button>;
     })}
   </div>;
-}
-
-function Fact({ label, value, sub }: { label: string; value: string; sub: string }) {
-  return <div><div className="label">{label}</div><div className="mt-1 font-mono tnum">{value}</div><div className="text-xs text-muted">{sub}</div></div>;
 }
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
