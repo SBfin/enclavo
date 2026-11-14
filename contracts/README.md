@@ -79,23 +79,18 @@ Views: `key_hash_of`, `get_config`, `list_auctions`, `get_auction`, `get_bids`, 
 An auction holds at most 100 open bids. When the book is full, a new bid must outprice the weakest
 one, which is returned to its owner.
 
-## Scope and roadmap
+## Known limits and next steps
 
-This is a testnet MVP. What it deliberately leaves for later:
+- Bids are public → seal and clear them inside the TEEs that serve the inference.
+- The operator is paid at clearing → vest proceeds over the term, refund the unserved part.
+- Entitlements are not transferable → issue them as NEP-171 tokens.
+- The clearing price can be nudged by marginal bids → price at the first rejected bid, add a
+  minimum bid size and a cancel freeze before the close.
+- A book records at most 100 open and 400 total bids → per-account caps and a bid deposit.
+- The contract pays its own storage → NEP-145 storage deposits.
+- No upgrade or pause → owner-gated upgrade with a migration hook.
 
-- **Sealed bids.** Bids are public on chain today. The plan is to seal and clear them inside the
-  same TEEs that serve the inference.
-- **Delivery-linked payout.** The operator is credited at clearing. Next step: proceeds vest over
-  the term and the unserved part is refundable.
-- **Tradable capacity.** Entitlements are records owned by the winner, not transferable tokens yet.
-- **Market rules.** Minimum bid size, a cancel freeze before the close and other anti-manipulation
-  rules are not enforced; the clearing rule matches the off-chain market one to one.
-- **Operations.** The contract pays its own storage and has no upgrade or pause switch.
-
-Every auction is bounded so it always settles in one transaction: 100 open bids, 400 recorded bids.
-The worst case (100 winners out of 400 recorded bids) burns about 52 Tgas of the 300 Tgas limit.
-
-The dashboard's Market page runs the off-chain auctions; the contract has its own On-chain page.
+The worst case (100 winners out of 400 recorded bids) settles in one transaction for about 52 Tgas.
 
 ## Build and test
 
