@@ -70,3 +70,24 @@ export function useChainMarket(chain: ChainInfo | null) {
 
   return { ...data, contract, error, refresh, placeBid, cancelBid, settle, withdraw, faucet };
 }
+
+/** Every bid on one auction, read from the contract and refreshed with the rest of the market. */
+export function useAuctionBids(chain: ChainInfo | null, auctionId: number | null) {
+  const [state, setState] = useState<{ id: number | null; bids: ChainBid[] }>({ id: null, bids: [] });
+  const load = useCallback((signal?: AbortSignal) => {
+    if (!chain || auctionId == null) return Promise.resolve({ id: auctionId, bids: [] as ChainBid[] });
+    return view<ChainBid[]>(chain, chain.auction_contract, "get_bids", { auction_id: auctionId }, signal).then((bids) => ({ id: auctionId, bids }));
+  }, [chain, auctionId]);
+  const refresh = useCallback(async () => { try { setState(await load()); } catch { /* the next poll retries */ } }, [load]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const update = () => { void load(controller.signal).then((next) => { if (!controller.signal.aborted) setState(next); }).catch(() => {}); };
+    update();
+    const timer = setInterval(update, 8_000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, [load]);
+
+  const current = state.id === auctionId;
+  return { bids: current ? state.bids : [], loaded: current, refresh };
+}

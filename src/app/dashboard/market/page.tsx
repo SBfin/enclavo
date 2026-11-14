@@ -4,7 +4,9 @@ import { useMemo, useState, useSyncExternalStore } from "react";
 import PageHeader from "@/components/PageHeader";
 import { useWallet } from "@/components/WalletProvider";
 import { useCatalog, type GatewayModel } from "@/lib/use-catalog";
-import { useChainMarket } from "@/lib/use-chain-market";
+import { useAuctionBids, useChainMarket } from "@/lib/use-chain-market";
+import { clearBook, type BookBid } from "@/lib/order-book";
+import OrderBook from "@/components/OrderBook";
 import { useMarket } from "@/lib/use-market";
 import { usd, type ChainAuction, type ChainBid } from "@/lib/near";
 import { fmtUSD, fmtTokens } from "@/lib/market";
@@ -74,9 +76,16 @@ export default function MarketPage() {
   const qty = auction ? Math.min(units, auction.units) : units;
   const escrow = auction ? qty * auction.term_days * priceAtomic : 0;
   const belowReserve = Boolean(auction) && priceAtomic < Number(auction?.reserve_price);
-  const fitsAtReserve = auction ? auction.open_bid_units + qty <= auction.units : false;
   const funds = market.wallet + market.unlocked;
   const short = Boolean(session) && market.loaded && funds < escrow;
+  const auctionBids = useAuctionBids(chain, auction?.id ?? null);
+  // The selected auction's book with the bid being drafted added last (so it loses price ties).
+  const book = useMemo(() => {
+    const bids: BookBid[] = auctionBids.bids.filter((b) => b.status === "open").map((b) => ({ index: b.index, units: b.units, price: Number(b.max_price), mine: b.bidder === session }));
+    if (auction && !belowReserve && priceAtomic > 0) bids.push({ index: Infinity, units: qty, price: priceAtomic, mine: false, draft: true });
+    return clearBook(bids, auction?.units ?? 0, Number(auction?.reserve_price ?? 0));
+  }, [auctionBids.bids, auction, belowReserve, priceAtomic, qty, session]);
+  const draftCost = book.price == null ? 0 : book.draftFill * (auction?.term_days ?? 0) * usd(book.price);
   const escrowed = market.bids.filter((b) => b.status === "open").reduce((sum, b) => sum + Number(b.escrow), 0);
 
   const syncedIds = new Set(contracts.map((c) => c.chain_entitlement_id).filter((id) => id != null));
@@ -87,7 +96,7 @@ export default function MarketPage() {
 
   async function run(done: string, action: () => Promise<unknown>) {
     setBusy(true); setFailure(null); setNotice(null);
-    try { await action(); setNotice(done); await market.refresh(); }
+    try { await action(); setNotice(done); await Promise.all([market.refresh(), auctionBids.refresh()]); }
     catch (error) { setFailure(error instanceof Error ? error.message : "The transaction was not completed."); }
     finally { setBusy(false); }
   }
@@ -145,6 +154,7 @@ export default function MarketPage() {
                   <p className={`mt-2 text-xs ${state.tone === "warn" ? "text-warn" : state.tone === "good" ? "text-good" : "text-muted"}`}>{state.text}</p>
                 </div>
               </button>
+              {selected && <div className="mt-2"><OrderBook book={book} lot={a.units} reserve={Number(a.reserve_price)} loaded={auctionBids.loaded} /></div>}
             </li>;
           })}
         </ul>
@@ -180,7 +190,7 @@ export default function MarketPage() {
           <dl className="mt-6 space-y-3 border-t border-line pt-4 text-sm">
             <Row label="If you win" value={`${fmtTokens(qty * auction.tokens_per_iu)} tokens/day for ${auction.term_days} days`} />
             <Row label="Escrowed now" value={Number.isFinite(escrow) ? fmtUSD(usd(escrow), 2) : "—"} mono />
-            <Row label="Cost if it closed now" mono value={belowReserve ? "Not filled" : fitsAtReserve ? fmtUSD(qty * auction.term_days * reserve, 2) : `${fmtUSD(qty * auction.term_days * reserve, 2)}–${fmtUSD(usd(escrow), 2)}`} />
+            <Row label="If it closed now" mono value={belowReserve ? "Rejected" : book.draftFill === 0 ? "Outbid" : `${book.draftFill === qty ? "" : `${book.draftFill} of ${qty} IU · `}${fmtUSD(draftCost, 2)}`} />
           </dl>
 
           {!session ? <button disabled={signingIn} onClick={() => void signIn()} className="mt-6 w-full rounded-md bg-foreground py-3 text-sm font-medium text-background disabled:opacity-40">{signingIn ? "Waiting for wallet…" : "Connect NEAR wallet to bid"}</button>
