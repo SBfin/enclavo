@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import PageHeader from "@/components/PageHeader";
+import ChainReadNote from "@/components/ChainReadNote";
 import { useAccount } from "@/components/AccountProvider";
 import { useWallet } from "@/components/WalletProvider";
 import { useCatalog } from "@/lib/use-catalog";
@@ -19,6 +20,8 @@ export default function AccountPage() {
   const [failure, setFailure] = useState<string | null>(null);
   const escrowed = market.bids.filter((b) => b.status === "open").reduce((sum, b) => sum + Number(b.escrow), 0);
   const credit = usd(account?.balance_micro_usd ?? 0);
+  // Until the chain has answered once, a balance is unknown rather than zero.
+  const amount = (atomic: number) => (market.loaded ? fmtUSD(usd(atomic), 2) : "—");
 
   async function run(done: string, action: () => Promise<unknown>) {
     setBusy(true); setFailure(null); setNotice(null);
@@ -32,6 +35,7 @@ export default function AccountPage() {
       <PageHeader title="Account" note={`NEAR ${network}`} />
       {failure && <p role="alert" className="mb-5 border border-warn p-4 text-sm text-warn">{failure}</p>}
       {notice && <p role="status" className="mb-5 border border-line p-4 text-sm text-good">{notice}</p>}
+      <ChainReadNote error={market.error} loaded={market.loaded} updatedAt={market.updatedAt} />
 
       <section>
         <h2 className="mb-3 text-lg font-medium">Wallet</h2>
@@ -48,9 +52,9 @@ export default function AccountPage() {
       <section className="mt-10">
         <h2 className="mb-3 text-lg font-medium">Balances</h2>
         <div className="grid grid-cols-1 border border-line sm:grid-cols-3">
-          <Balance label="USDC in wallet" value={fmtUSD(usd(market.wallet), 2)} hint="Available to bid" />
-          <Balance label="In escrow" value={fmtUSD(usd(escrowed), 2)} hint="Held by open bids" />
-          <Balance label="Unlocked in contract" value={fmtUSD(usd(market.unlocked), 2)} hint="Refunds; used first for new bids" />
+          <Balance label="USDC in wallet" value={amount(market.wallet)} hint="Available to bid" />
+          <Balance label="In escrow" value={amount(escrowed)} hint="Held by open bids" />
+          <Balance label="Unlocked in contract" value={amount(market.unlocked)} hint="Refunds; used first for new bids" />
         </div>
         <div className="mt-3 flex flex-wrap gap-3 text-sm">
           {network === "testnet" && <button disabled={busy || !walletAccount} onClick={() => void run("1,000 test USDC added to your wallet.", market.faucet)} className="rounded-md bg-foreground px-4 py-2 font-medium text-background disabled:opacity-40">Get 1,000 test USDC</button>}
