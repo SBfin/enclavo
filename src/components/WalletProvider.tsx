@@ -3,6 +3,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { NearConnector, NearWalletBase } from "@hot-labs/near-connect";
 
+/** Dispatched after each wallet transaction so balance displays refresh straight away. */
+export const BALANCES_EVENT = "enclavo:balances";
+
 export const NEAR_NETWORK: "testnet" | "mainnet" = process.env.NEXT_PUBLIC_NEAR_NETWORK === "mainnet" ? "mainnet" : "testnet";
 
 type Call = { method: string; args: object; gas: string; deposit: string };
@@ -129,7 +132,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const call = useCallback(async (receiverId: string, { method, args, gas, deposit }: Call) => {
     if (!connector.current) throw new Error("Connect a NEAR wallet first.");
     const wallet = await connector.current.wallet();
-    return wallet.signAndSendTransaction({ receiverId, actions: [{ type: "FunctionCall", params: { methodName: method, args, gas, deposit } }] });
+    const outcome = await wallet.signAndSendTransaction({ receiverId, actions: [{ type: "FunctionCall", params: { methodName: method, args, gas, deposit } }] });
+    window.dispatchEvent(new Event(BALANCES_EVENT));
+    return outcome;
   }, []);
 
   return (

@@ -4,6 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useWallet } from "@/components/WalletProvider";
 import { Wordmark } from "@/components/Logo";
+import { fmtTokens, fmtUSD } from "@/lib/market";
+import { usd } from "@/lib/near";
+import { useBalances } from "@/lib/use-balances";
 
 const NAV = [
   { href: "/dashboard/how-it-works", label: "How it works", icon: GuideIcon },
@@ -48,6 +51,8 @@ export default function Sidebar() {
 
       {!authenticated && <button type="button" disabled={busy} onClick={() => void signIn()} className="m-4 rounded-md bg-foreground px-4 py-2 text-sm text-background disabled:opacity-50">{busy ? "Waiting for wallet…" : "Connect NEAR wallet"}</button>}
 
+      {authenticated && <SidebarBalances />}
+
       <div className={`border-t border-line px-5 py-4 ${authenticated ? "hidden md:block" : "hidden"}`}>
         <div className="label">NEAR {network}</div>
         <div className="mt-1 truncate text-sm" title={identity}>
@@ -59,6 +64,26 @@ export default function Sidebar() {
       </div>
     </aside>
   );
+}
+
+function SidebarBalances() {
+  const { balances, credit } = useBalances();
+  const value = (micro: number) => (balances ? fmtUSD(usd(micro), 2) : "…");
+  return (
+    <Link href="/dashboard/account" aria-label="Balances, open Account" className="mx-3 mb-3 hidden rounded-md border border-line px-3 py-3 text-xs transition hover:bg-white/[0.03] md:block">
+      <div className="label">Balance</div>
+      <div className="mt-1 font-mono text-lg tnum text-foreground">{value((balances?.wallet ?? 0) + (balances?.unlocked ?? 0))} <span className="font-sans text-xs text-muted">USDC</span></div>
+      <dl className="mt-2 space-y-1">
+        <BalanceRow label="In open bids" value={value(balances?.escrow ?? 0)} />
+        {credit > 0 && <BalanceRow label="Enclavo credit" value={fmtUSD(usd(credit), 2)} />}
+        {balances && balances.tokensDaily > 0 && <BalanceRow label="Tokens left today" value={`${fmtTokens(balances.tokensLeft)} / ${fmtTokens(balances.tokensDaily)}`} />}
+      </dl>
+    </Link>
+  );
+}
+
+function BalanceRow({ label, value }: { label: string; value: string }) {
+  return <div className="flex justify-between gap-2"><dt className="text-muted">{label}</dt><dd className="font-mono tnum">{value}</dd></div>;
 }
 
 function KeyIcon() {
