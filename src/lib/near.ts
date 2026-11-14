@@ -20,6 +20,7 @@ export async function view<T>(chain: ChainInfo, contract: string, method: string
     signal,
     body: JSON.stringify({ jsonrpc: "2.0", id: "enclavo", method: "query", params: { request_type: "call_function", finality: "optimistic", account_id: contract, method_name: method, args_base64: btoa(JSON.stringify(args)) } }),
   });
+  if (!response.ok) throw new Error(`NEAR RPC returned ${response.status}`);
   const body = await response.json();
   const error = body.error ?? body.result?.error;
   if (error) throw new Error(typeof error === "string" ? error : error.data ?? error.message ?? "NEAR RPC error");

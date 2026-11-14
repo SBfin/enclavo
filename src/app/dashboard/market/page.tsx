@@ -12,6 +12,7 @@ import { useMarket } from "@/lib/use-market";
 import { usd, type ChainAuction, type ChainBid } from "@/lib/near";
 import { fmtUSD, fmtTokens } from "@/lib/market";
 import { DEFAULT_FILTERS, countByStatus, filterAuctions, phase, timeLeft, type Filters } from "@/lib/auction-listing";
+import { ago } from "@/lib/poll-policy";
 
 // A one-second clock for countdowns. It reads 0 during prerendering and hydration, so
 // time-dependent text only appears once the page is running in the browser.
@@ -116,7 +117,10 @@ export default function MarketPage() {
 
   return <div className="mx-auto w-full max-w-7xl px-6 py-8 sm:px-10">
     <PageHeader title="Market" note={chain ? `Settled on NEAR ${chain.network} · ${market.contract}` : "Settled on NEAR"} />
-    {(market.error || failure) && <p role="alert" className="mb-5 border border-warn p-4 text-sm text-warn">{failure || market.error}</p>}
+    {failure && <p role="alert" className="mb-5 border border-warn p-4 text-sm text-warn">{failure}</p>}
+    {market.error && <p role="status" className="mb-5 border border-line px-4 py-3 text-xs text-muted">
+      {market.error} {market.loaded ? `Showing chain data from ${ago(market.updatedAt, now || market.updatedAt)}; ` : ""}retrying automatically.
+    </p>}
     {notice && <p role="status" className="mb-5 border border-line p-4 text-sm text-good">{notice}</p>}
 
     <section className="grid grid-cols-2 border border-line md:grid-cols-4">

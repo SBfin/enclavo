@@ -1,11 +1,12 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import { useWallet } from "@/components/WalletProvider";
 import { PLAIN_CALL, TOKEN_CALL, USD, view, type ChainAuction, type ChainBid, type ChainEntitlement, type ChainInfo } from "@/lib/near";
+import { usePolled } from "@/lib/use-polled";
 
 export const FAUCET_AMOUNT = 1_000 * USD;
 
-type Snapshot = {
+export type Snapshot = {
   token: string;
   /** The account that publishes auctions and may close one early. */
   operator: string;
@@ -20,43 +21,52 @@ type Snapshot = {
 };
 const EMPTY: Snapshot = { token: "", operator: "", auctions: [], bids: [], entitlements: [], unlocked: 0, wallet: 0, loaded: false };
 
+/** Market data changes slowly; a bid or settlement refreshes it at once through the wallet event. */
+const MARKET_INTERVAL_MS = 20_000;
+const BOOK_INTERVAL_MS = 20_000;
+
+// The settlement token and operator never change for a contract, so they are read once per page load.
+type Config = { token: string; owner: string };
+const configs = new Map<string, Promise<Config>>();
+function configOf(chain: ChainInfo): Promise<Config> {
+  const key = `${chain.rpc_url}|${chain.auction_contract}`;
+  let config = configs.get(key);
+  if (!config) {
+    config = view<Config>(chain, chain.auction_contract, "get_config");
+    config.catch(() => configs.delete(key));
+    configs.set(key, config);
+  }
+  return config;
+}
+
+/**
+ * Public auctions plus one account's bids, entitlements and balances, polled once for the whole
+ * page however many components read it (Market, Account, sidebar).
+ */
+export function useChainSnapshot(chain: ChainInfo | null, account: string | null) {
+  const contract = chain?.auction_contract ?? "";
+  const load = useCallback(async (signal: AbortSignal): Promise<Snapshot> => {
+    if (!chain) return EMPTY;
+    const read = <T,>(target: string, method: string, args: object = {}) => view<T>(chain, target, method, args, signal);
+    const [{ token, owner: operator }, auctions] = await Promise.all([configOf(chain), read<ChainAuction[]>(contract, "list_auctions", { limit: 50 })]);
+    if (!account) return { ...EMPTY, token, operator, auctions, loaded: true };
+    const owner = { account_id: account };
+    const [bids, entitlements, unlocked, wallet] = await Promise.all([
+      read<ChainBid[]>(contract, "bids_of", owner), read<ChainEntitlement[]>(contract, "entitlements_of", owner),
+      read<string>(contract, "balance_of", owner), read<string>(token, "ft_balance_of", owner),
+    ]);
+    return { token, operator, auctions, bids, entitlements, unlocked: Number(unlocked), wallet: Number(wallet), loaded: true };
+  }, [chain, contract, account]);
+  return usePolled(chain ? `market|${chain.rpc_url}|${contract}|${account ?? ""}` : null, load, MARKET_INTERVAL_MS);
+}
+
 // The NEAR auction contract as seen by the connected wallet: public auctions plus the wallet's
 // own bids, entitlements and balances, and the transactions the Market and Account pages send.
 export function useChainMarket(chain: ChainInfo | null) {
   const { walletAccount, call } = useWallet();
   const contract = chain?.auction_contract ?? "";
-  const [data, setData] = useState<Snapshot>(EMPTY);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async (signal?: AbortSignal): Promise<Snapshot> => {
-    if (!chain) return EMPTY;
-    const read = <T,>(target: string, method: string, args: object = {}) => view<T>(chain, target, method, args, signal);
-    const [config, auctions] = await Promise.all([read<{ token: string; owner: string }>(contract, "get_config"), read<ChainAuction[]>(contract, "list_auctions", { limit: 50 })]);
-    if (!walletAccount) return { ...EMPTY, token: config.token, operator: config.owner, auctions, loaded: true };
-    const owner = { account_id: walletAccount };
-    const [bids, entitlements, unlocked, wallet] = await Promise.all([
-      read<ChainBid[]>(contract, "bids_of", owner), read<ChainEntitlement[]>(contract, "entitlements_of", owner),
-      read<string>(contract, "balance_of", owner), read<string>(config.token, "ft_balance_of", owner),
-    ]);
-    return { token: config.token, operator: config.owner, auctions, bids, entitlements, unlocked: Number(unlocked), wallet: Number(wallet), loaded: true };
-  }, [chain, contract, walletAccount]);
-
-  const refresh = useCallback(async () => {
-    try { setData(await load()); setError(null); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not read the auction contract."); }
-  }, [load]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const update = () => {
-      void load(controller.signal)
-        .then((result) => { if (!controller.signal.aborted) { setData(result); setError(null); } })
-        .catch((cause) => { if (!controller.signal.aborted) setError(cause.message); });
-    };
-    update();
-    const timer = setInterval(update, 8_000);
-    return () => { controller.abort(); clearInterval(timer); };
-  }, [load]);
+  const polled = useChainSnapshot(chain, walletAccount);
+  const data = polled.data ?? EMPTY;
 
   /** Escrows units × days × maxPrice. Funds already unlocked in the contract are used first. */
   const placeBid = useCallback(async (auction: ChainAuction, units: number, maxPrice: number) => {
@@ -72,26 +82,16 @@ export function useChainMarket(chain: ChainInfo | null) {
   const withdraw = useCallback(() => call(contract, { method: "withdraw", args: {}, ...PLAIN_CALL }), [call, contract]);
   const faucet = useCallback(() => call(data.token, { method: "mint", args: { account_id: walletAccount, amount: String(FAUCET_AMOUNT) }, ...PLAIN_CALL }), [call, data.token, walletAccount]);
 
-  return { ...data, contract, error, refresh, placeBid, cancelBid, settle, closeEarly, withdraw, faucet };
+  return { ...data, contract, error: polled.error, updatedAt: polled.updatedAt, refresh: polled.refresh, placeBid, cancelBid, settle, closeEarly, withdraw, faucet };
 }
 
-/** Every bid on one auction, read from the contract and refreshed with the rest of the market. */
+/** Every bid on one auction, read from the contract and shared like the market snapshot. */
 export function useAuctionBids(chain: ChainInfo | null, auctionId: number | null) {
-  const [state, setState] = useState<{ id: number | null; bids: ChainBid[] }>({ id: null, bids: [] });
-  const load = useCallback((signal?: AbortSignal) => {
-    if (!chain || auctionId == null) return Promise.resolve({ id: auctionId, bids: [] as ChainBid[] });
-    return view<ChainBid[]>(chain, chain.auction_contract, "get_bids", { auction_id: auctionId }, signal).then((bids) => ({ id: auctionId, bids }));
-  }, [chain, auctionId]);
-  const refresh = useCallback(async () => { try { setState(await load()); } catch { /* the next poll retries */ } }, [load]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const update = () => { void load(controller.signal).then((next) => { if (!controller.signal.aborted) setState(next); }).catch(() => {}); };
-    update();
-    const timer = setInterval(update, 8_000);
-    return () => { controller.abort(); clearInterval(timer); };
-  }, [load]);
-
-  const current = state.id === auctionId;
-  return { bids: current ? state.bids : [], loaded: current, refresh };
+  const load = useCallback(
+    (signal: AbortSignal) => (chain && auctionId != null ? view<ChainBid[]>(chain, chain.auction_contract, "get_bids", { auction_id: auctionId }, signal) : Promise.resolve([] as ChainBid[])),
+    [chain, auctionId],
+  );
+  const key = chain && auctionId != null ? `bids|${chain.rpc_url}|${chain.auction_contract}|${auctionId}` : null;
+  const polled = usePolled(key, load, BOOK_INTERVAL_MS);
+  return { bids: polled.data ?? [], loaded: polled.data !== undefined, refresh: polled.refresh };
 }
