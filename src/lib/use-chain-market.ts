@@ -7,6 +7,8 @@ export const FAUCET_AMOUNT = 1_000 * USD;
 
 type Snapshot = {
   token: string;
+  /** The account that publishes auctions and may close one early. */
+  operator: string;
   auctions: ChainAuction[];
   bids: ChainBid[];
   entitlements: ChainEntitlement[];
@@ -16,7 +18,7 @@ type Snapshot = {
   wallet: number;
   loaded: boolean;
 };
-const EMPTY: Snapshot = { token: "", auctions: [], bids: [], entitlements: [], unlocked: 0, wallet: 0, loaded: false };
+const EMPTY: Snapshot = { token: "", operator: "", auctions: [], bids: [], entitlements: [], unlocked: 0, wallet: 0, loaded: false };
 
 // The NEAR auction contract as seen by the connected wallet: public auctions plus the wallet's
 // own bids, entitlements and balances, and the transactions the Market and Account pages send.
@@ -29,14 +31,14 @@ export function useChainMarket(chain: ChainInfo | null) {
   const load = useCallback(async (signal?: AbortSignal): Promise<Snapshot> => {
     if (!chain) return EMPTY;
     const read = <T,>(target: string, method: string, args: object = {}) => view<T>(chain, target, method, args, signal);
-    const [config, auctions] = await Promise.all([read<{ token: string }>(contract, "get_config"), read<ChainAuction[]>(contract, "list_auctions", { limit: 50 })]);
-    if (!walletAccount) return { ...EMPTY, token: config.token, auctions, loaded: true };
+    const [config, auctions] = await Promise.all([read<{ token: string; owner: string }>(contract, "get_config"), read<ChainAuction[]>(contract, "list_auctions", { limit: 50 })]);
+    if (!walletAccount) return { ...EMPTY, token: config.token, operator: config.owner, auctions, loaded: true };
     const owner = { account_id: walletAccount };
     const [bids, entitlements, unlocked, wallet] = await Promise.all([
       read<ChainBid[]>(contract, "bids_of", owner), read<ChainEntitlement[]>(contract, "entitlements_of", owner),
       read<string>(contract, "balance_of", owner), read<string>(config.token, "ft_balance_of", owner),
     ]);
-    return { token: config.token, auctions, bids, entitlements, unlocked: Number(unlocked), wallet: Number(wallet), loaded: true };
+    return { token: config.token, operator: config.owner, auctions, bids, entitlements, unlocked: Number(unlocked), wallet: Number(wallet), loaded: true };
   }, [chain, contract, walletAccount]);
 
   const refresh = useCallback(async () => {
@@ -65,10 +67,12 @@ export function useChainMarket(chain: ChainInfo | null) {
   }, [call, contract, data.token, data.unlocked]);
   const cancelBid = useCallback((bid: ChainBid) => call(contract, { method: "cancel_bid", args: { auction_id: bid.auction_id, index: bid.index }, ...PLAIN_CALL }), [call, contract]);
   const settle = useCallback((id: number) => call(contract, { method: "clear_auction", args: { auction_id: id }, ...PLAIN_CALL }), [call, contract]);
+  /** Operator only: ends bidding now and settles in the same transaction. */
+  const closeEarly = useCallback((id: number) => call(contract, { method: "close_auction", args: { auction_id: id }, ...PLAIN_CALL }), [call, contract]);
   const withdraw = useCallback(() => call(contract, { method: "withdraw", args: {}, ...PLAIN_CALL }), [call, contract]);
   const faucet = useCallback(() => call(data.token, { method: "mint", args: { account_id: walletAccount, amount: String(FAUCET_AMOUNT) }, ...PLAIN_CALL }), [call, data.token, walletAccount]);
 
-  return { ...data, contract, error, refresh, placeBid, cancelBid, settle, withdraw, faucet };
+  return { ...data, contract, error, refresh, placeBid, cancelBid, settle, closeEarly, withdraw, faucet };
 }
 
 /** Every bid on one auction, read from the contract and refreshed with the rest of the market. */

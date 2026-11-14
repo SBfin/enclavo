@@ -39,10 +39,13 @@ type Props = {
   expanded: ReactNode;
   onSettle: (id: number) => void;
   canSettle: boolean;
+  /** Ends bidding early and settles at once. Only the operator's wallet can do this. */
+  onClose: (id: number) => void;
+  canClose: boolean;
   busy: boolean;
 };
 
-export default function AuctionListing({ auctions, listed, counts, now, loaded, nameOf, filters, onFilters, selectedId, onSelect, expanded, onSettle, canSettle, busy }: Props) {
+export default function AuctionListing({ auctions, listed, counts, now, loaded, nameOf, filters, onFilters, selectedId, onSelect, expanded, onSettle, canSettle, onClose, canClose, busy }: Props) {
   const set = (patch: Partial<Filters>) => onFilters({ ...filters, ...patch });
   const clear = () => onFilters({ ...DEFAULT_FILTERS, status: filters.status, sort: filters.sort });
   const routes = [...new Set(auctions.map((a) => a.route_id))].sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
@@ -96,15 +99,16 @@ export default function AuctionListing({ auctions, listed, counts, now, loaded, 
           {filtered ? <>No auctions match these filters. <button type="button" onClick={clear} className="text-accent">Clear filters</button></> : EMPTY[filters.status]}
         </p>
         : <ul>{listed.map((a) => <AuctionRow key={a.id} auction={a} now={now} name={nameOf(a.route_id)} selected={a.id === selectedId && phase(a, now) === "open"}
-          expanded={expanded} onSelect={onSelect} onSettle={onSettle} canSettle={canSettle} busy={busy} />)}</ul>}
+          expanded={expanded} onSelect={onSelect} onSettle={onSettle} canSettle={canSettle} onClose={onClose} canClose={canClose} busy={busy} />)}</ul>}
     </div>
     {auctions.length >= 50 && <p className="mt-2 text-xs text-muted">Showing the 50 most recent auctions.</p>}
   </section>;
 }
 
-function AuctionRow({ auction: a, now, name, selected, expanded, onSelect, onSettle, canSettle, busy }: {
+function AuctionRow({ auction: a, now, name, selected, expanded, onSelect, onSettle, canSettle, onClose, canClose, busy }: {
   auction: ChainAuction; now: number; name: string; selected: boolean; expanded: ReactNode;
-  onSelect: (id: number) => void; onSettle: (id: number) => void; canSettle: boolean; busy: boolean;
+  onSelect: (id: number) => void; onSettle: (id: number) => void; canSettle: boolean;
+  onClose: (id: number) => void; canClose: boolean; busy: boolean;
 }) {
   const state = phase(a, now);
   const ratio = demandRatio(a);
@@ -146,6 +150,10 @@ function AuctionRow({ auction: a, now, name, selected, expanded, onSelect, onSet
     {state === "closed" && <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3 text-xs text-muted">
       <span>Settling runs the clearing on chain. Anyone with a connected wallet can do it, for a small gas fee.</span>
       <button type="button" disabled={busy || !canSettle} onClick={() => onSettle(a.id)} className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background disabled:opacity-40">Settle now</button>
+    </div>}
+    {state === "open" && canClose && <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3 text-xs text-muted">
+      <span>You are the operator. Closing ends bidding now and settles the auction in the same transaction.</span>
+      <button type="button" disabled={busy} onClick={() => onClose(a.id)} className="rounded-md border border-line px-4 py-2 text-sm font-medium text-foreground disabled:opacity-40">Close and settle now</button>
     </div>}
     {selected && <div className="border-t border-line p-3">
       <p className={`mb-3 text-xs ${ratio > 1 ? "text-warn" : ratio > 0 ? "text-good" : "text-muted"}`}>{demandNote(a)}</p>

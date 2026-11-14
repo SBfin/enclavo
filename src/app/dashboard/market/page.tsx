@@ -139,7 +139,8 @@ export default function MarketPage() {
           <AuctionListing auctions={market.auctions} listed={listed} counts={counts} now={now} loaded={market.loaded} nameOf={nameFor}
             filters={filters} onFilters={setFilters} selectedId={auction?.id ?? null} onSelect={select}
             expanded={auction && <OrderBook book={book} lot={auction.units} reserve={Number(auction.reserve_price)} loaded={auctionBids.loaded} />}
-            canSettle={Boolean(session)} busy={busy} onSettle={(id) => void run("Auction settled. Winners now hold capacity; unspent escrow is unlocked.", () => market.settle(id))} />
+            canSettle={Boolean(session)} busy={busy} onSettle={(id) => void run("Auction settled. Winners now hold capacity; unspent escrow is unlocked.", () => market.settle(id))}
+            canClose={Boolean(session) && session === market.operator} onClose={(id) => void run("Auction closed and settled. Winners now hold capacity; unspent escrow is unlocked.", () => market.closeEarly(id))} />
 
           <aside className="h-fit border border-line bg-panel p-5 lg:sticky lg:top-6">
             {!auction ? <>
