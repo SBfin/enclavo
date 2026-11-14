@@ -12,17 +12,8 @@ import { useMarket } from "@/lib/use-market";
 import { usd, type ChainAuction, type ChainBid } from "@/lib/near";
 import { fmtUSD, fmtTokens } from "@/lib/market";
 import { DEFAULT_FILTERS, countByStatus, filterAuctions, phase, timeLeft, type Filters } from "@/lib/auction-listing";
-import { ago } from "@/lib/poll-policy";
-
-// A one-second clock for countdowns. It reads 0 during prerendering and hydration, so
-// time-dependent text only appears once the page is running in the browser.
-let clock = 0;
-function subscribeClock(onTick: () => void) {
-  clock = Date.now();
-  const timer = setInterval(() => { clock = Date.now(); onTick(); }, 1000);
-  return () => clearInterval(timer);
-}
-const useNow = () => useSyncExternalStore(subscribeClock, () => clock, () => 0);
+import { useNow } from "@/lib/use-now";
+import ChainReadNote from "@/components/ChainReadNote";
 
 // The open tab lives in the URL hash, so a link or a reload lands on the same tab.
 const TABS = ["auctions", "bids", "capacity", "models"] as const;
@@ -118,16 +109,14 @@ export default function MarketPage() {
   return <div className="mx-auto w-full max-w-7xl px-6 py-8 sm:px-10">
     <PageHeader title="Market" note={chain ? `Settled on NEAR ${chain.network} · ${market.contract}` : "Settled on NEAR"} />
     {failure && <p role="alert" className="mb-5 border border-warn p-4 text-sm text-warn">{failure}</p>}
-    {market.error && <p role="status" className="mb-5 border border-line px-4 py-3 text-xs text-muted">
-      {market.error} {market.loaded ? `Showing chain data from ${ago(market.updatedAt, now || market.updatedAt)}; ` : ""}retrying automatically.
-    </p>}
+    <ChainReadNote error={market.error} loaded={market.loaded} updatedAt={market.updatedAt} />
     {notice && <p role="status" className="mb-5 border border-line p-4 text-sm text-good">{notice}</p>}
 
     <section className="grid grid-cols-2 border border-line md:grid-cols-4">
-      <Tile label="Open auctions" value={String(open.length)} hint={`${fmtTokens(open.reduce((sum, a) => sum + a.units, 0))} IU/day offered`} />
-      <Tile label="USDC in wallet" value={session ? fmtUSD(usd(market.wallet), 2) : "—"} hint={session ? "Available to bid" : "Connect a wallet"} />
-      <Tile label="In escrow" value={session ? fmtUSD(usd(escrowed), 2) : "—"} hint="Held by your open bids" />
-      <Tile label="Unlocked" value={session ? fmtUSD(usd(market.unlocked), 2) : "—"} hint={market.unlocked > 0 ? "Used first for bids · withdraw in Account" : "Refunds land here"} />
+      <Tile label="Open auctions" value={market.loaded ? String(open.length) : "—"} hint={`${fmtTokens(open.reduce((sum, a) => sum + a.units, 0))} IU/day offered`} />
+      <Tile label="USDC in wallet" value={session && market.loaded ? fmtUSD(usd(market.wallet), 2) : "—"} hint={session ? "Available to bid" : "Connect a wallet"} />
+      <Tile label="In escrow" value={session && market.loaded ? fmtUSD(usd(escrowed), 2) : "—"} hint="Held by your open bids" />
+      <Tile label="Unlocked" value={session && market.loaded ? fmtUSD(usd(market.unlocked), 2) : "—"} hint={market.unlocked > 0 ? "Used first for bids · withdraw in Account" : "Refunds land here"} />
     </section>
 
     <TabBar current={tab} onSelect={showTab} tabs={[
