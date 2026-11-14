@@ -1,0 +1,112 @@
+# Checks every push and pull request; deploys Fly.io staging on pushes to main.
+# Production (fly.production.toml) and NEAR contract upgrades stay manual. See docs/ci.md.
+name: Staging
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  web:
+    name: Checks / web
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx eslint
+      # Generates the RouteContext/LayoutProps globals that tsc needs.
+      - run: npx next typegen
+      - run: npx tsc --noEmit
+      - run: node --test tests/*.test.mjs
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_NEAR_NETWORK: testnet
+
+  contracts:
+    name: Checks / contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts
+      - name: Install cargo-near
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/near/cargo-near/releases/download/cargo-near-v0.23.0/cargo-near-installer.sh | sh
+      # The sandbox end-to-end tests deploy these wasm files.
+      - run: cargo near build non-reproducible-wasm --manifest-path auction/Cargo.toml
+      - run: cargo near build non-reproducible-wasm --manifest-path mock-usdc/Cargo.toml
+      - run: cargo test --locked
+
+  gateway:
+    name: Checks / gateway
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: gateway
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gateway
+      # Each test creates and drops its own database through this admin connection.
+      - run: cargo test --locked
+        env:
+          TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres
+
+  deploy:
+    name: Deploy staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [web, contracts, gateway]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
+    # One deploy at a time; a newer push waits instead of cancelling a deploy mid-rollout.
+    concurrency:
+      group: fly-staging
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+      # Gateway first: the web app talks to it and its release command runs migrations.
+      - name: Deploy gateway
+        working-directory: gateway
+        run: flyctl deploy --remote-only -c fly.staging.toml --ha=false --no-public-ips
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_GATEWAY }}
+      - name: Deploy web
+        run: flyctl deploy --remote-only -c fly.staging.toml --ha=false
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_WEB }}

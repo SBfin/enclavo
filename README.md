@@ -195,6 +195,9 @@ docker compose -f compose.staging.yaml down
 
 ### Configure and deploy staging
 
+After the one-time setup below, pushes to `main` deploy staging automatically once checks pass;
+see [docs/ci.md](docs/ci.md) for the workflow and the Fly deploy tokens it needs.
+
 1. Install [flyctl](https://fly.io/docs/flyctl/install/) and sign in with `fly auth login`.
    Select the organization that will own billing. The following steps create paid resources.
 2. Choose globally unique web/gateway names. Update `app` in both staging manifests,
