@@ -697,3 +697,46 @@ fn deposits_and_withdrawals_emit_events() {
     let logs = near_sdk::test_utils::get_logs();
     assert!(logs[0].contains(r#""event":"withdraw_failed""#) && logs[1].contains(r#""event":"withdraw""#));
 }
+
+#[test]
+fn operator_closes_an_auction_early_and_it_settles_at_once() {
+    let mut c = setup(10);
+    bid(&mut c, "alice.near", 6, 3 * USD, 10);
+    bid(&mut c, "bob.near", 6, 2 * USD, 20);
+    ctx("operator.near", 300);
+    c.close_auction(0);
+    let auction = c.get_auction(0).unwrap();
+    assert_eq!((auction.status, auction.ends_at_ms, auction.cleared_at_ms), (AuctionStatus::Cleared, 300, Some(300)));
+    assert_eq!((auction.clearing_price, auction.filled_units), (Some(U128(2 * USD)), 10));
+    // The term starts at the early close.
+    assert_eq!(c.get_entitlement(0).unwrap().starts_at_ms, 300);
+    assert_eq!(balance(&c, "operator.near"), 10 * 7 * 2 * USD);
+    assert_solvent(&c, &["alice.near", "bob.near", "operator.near"]);
+}
+
+#[test]
+#[should_panic(expected = "no longer accepting bids")]
+fn bids_after_an_early_close_are_rejected() {
+    let mut c = setup(10);
+    ctx("operator.near", 300);
+    c.close_auction(0);
+    bid(&mut c, "alice.near", 1, USD, 301);
+}
+
+#[test]
+#[should_panic(expected = "Only the operator can close")]
+fn only_operator_closes_early() {
+    let mut c = setup(10);
+    ctx("alice.near", 300);
+    c.close_auction(0);
+}
+
+#[test]
+fn closing_after_the_end_time_just_settles() {
+    let mut c = setup(10);
+    bid(&mut c, "alice.near", 1, USD, 10);
+    ctx("operator.near", 5_000);
+    c.close_auction(0);
+    let auction = c.get_auction(0).unwrap();
+    assert_eq!((auction.status, auction.ends_at_ms), (AuctionStatus::Cleared, 1_000));
+}
