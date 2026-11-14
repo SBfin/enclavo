@@ -27,6 +27,7 @@ services:
       DATABASE_URL: postgres://enclavo:enclavo@postgres:5432/enclavo
       NEAR_AI_API_KEY: ${NEAR_AI_API_KEY:?Set NEAR_AI_API_KEY in .env}
       NEAR_AI_MODEL: ${NEAR_AI_MODEL:-z-ai/glm-5.3-flash}
+      ENCLAVO_AUCTION_CONTRACT: ${ENCLAVO_AUCTION_CONTRACT-enclavo-auction.testnet}
       ENCLAVO_CONTROL_TOKEN: ${STAGING_CONTROL_TOKEN:?Set a separate STAGING_CONTROL_TOKEN}
       LOG_FORMAT: json
     depends_on:

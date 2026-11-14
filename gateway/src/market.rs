@@ -262,7 +262,7 @@ async fn contracts_for_account(state: &Shared, account: Uuid) -> Result<Json<Val
     let data=rows.into_iter().map(|r|{
         let quota=r.try_get::<i64,_>("units")? as f64*r.try_get::<i64,_>("tokens_per_iu")? as f64;
         let used=r.try_get::<i64,_>("used_bps")? as f64/10_000.0;let held=r.try_get::<i64,_>("held_bps")? as f64/10_000.0;
-        Ok(json!({"id":r.try_get::<Uuid,_>("id")?,"auction_id":r.try_get::<Uuid,_>("auction_id")?,"route_id":r.try_get::<String,_>("route_id")?,"units":r.try_get::<i64,_>("units")?,"starts_at":r.try_get::<chrono::DateTime<chrono::Utc>,_>("starts_at")?,"ends_at":r.try_get::<chrono::DateTime<chrono::Utc>,_>("ends_at")?,"active":r.try_get::<bool,_>("active")?,"paid_micro_usd":r.try_get::<i64,_>("paid_micro")?,"daily_tokens":quota,"used_tokens":used,"held_tokens":held,"remaining_tokens":(quota-used-held).max(0.0)}))
+        Ok(json!({"id":r.try_get::<Uuid,_>("id")?,"auction_id":r.try_get::<Option<Uuid>,_>("auction_id")?,"chain_contract":r.try_get::<Option<String>,_>("chain_contract")?,"chain_entitlement_id":r.try_get::<Option<i64>,_>("chain_entitlement_id")?,"route_id":r.try_get::<String,_>("route_id")?,"units":r.try_get::<i64,_>("units")?,"starts_at":r.try_get::<chrono::DateTime<chrono::Utc>,_>("starts_at")?,"ends_at":r.try_get::<chrono::DateTime<chrono::Utc>,_>("ends_at")?,"active":r.try_get::<bool,_>("active")?,"paid_micro_usd":r.try_get::<i64,_>("paid_micro")?,"daily_tokens":quota,"used_tokens":used,"held_tokens":held,"remaining_tokens":(quota-used-held).max(0.0)}))
     }).collect::<Result<Vec<_>,sqlx::Error>>()?;
     Ok(Json(json!({"contracts":data})))
 }

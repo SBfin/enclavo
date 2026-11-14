@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { ChainInfo } from "@/lib/near";
 
 export type GatewayModel = {
   id: string;
@@ -26,6 +27,7 @@ export type GatewayStatus = {
   mode: "live" | "test";
   funding: "operator_credit" | "x402";
   attestation_verification: string;
+  chain?: ChainInfo | null;
 };
 
 export function useCatalog() {

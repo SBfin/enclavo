@@ -44,6 +44,26 @@ input/output ratio. Capacity resets every 24 hours from the contract's start; un
 roll over. Ownership, remaining quota, expiry, concurrent reservations, and failed-request recovery are
 enforced in Postgres for both Playground and external API requests.
 
+## On-chain auctions (NEAR testnet)
+
+`contracts/` holds a NEAR version of the auction. It runs beside the off-chain Market above; the
+two do not share auctions, bids or balances.
+
+- **Contract** (`enclavo-auction.testnet`): bids are escrowed in a stablecoin, cleared with the
+  same uniform-price rule, and each winner receives an on-chain entitlement. Unspent escrow is
+  withdrawable. The settlement token is a testnet mock (`enclavo-musdc.testnet`) with an open faucet.
+- **Gateway mirror** (`gateway/src/chain.rs`): with `ENCLAVO_AUCTION_CONTRACT` set, the gateway
+  reads finalized contract state every ten seconds and turns entitlements into capacity
+  contracts. A wallet authorizes an API key by publishing its SHA-256 hash on chain; the gateway
+  then serves that wallet's capacity to the key. No Enclavo account or Privy sign-in is involved.
+- **On-chain page** (`/dashboard/onchain`): connect a NEAR wallet, get test mUSDC, bid, cancel,
+  settle a closed auction, withdraw, and authorize an API key.
+
+Docker Compose and the Fly staging manifest point at the testnet deployment by default; set
+`ENCLAVO_AUCTION_CONTRACT=` (empty) in `.env` to run without the chain. Production leaves it unset.
+The operator publishes on-chain auctions with the NEAR CLI, not `enclavo-admin`. Contract
+interface, scripts and limits are in [contracts/README.md](contracts/README.md).
+
 ## Operator setup
 
 Only the operator, with database access, can issue credit or publish capacity. These commands are not
@@ -83,6 +103,7 @@ if provider prices change. There is no automatic supplier purchase or GPU reserv
 | Market | http://localhost:3001/dashboard/market |
 | Playground | http://localhost:3001/dashboard/playground |
 | API Keys | http://localhost:3001/dashboard/api-keys |
+| On-chain market | http://localhost:3001/dashboard/onchain |
 | Same-origin inference API | http://localhost:3001/api/v1 |
 | Gateway catalog / mode | http://localhost:8088/v1/models · http://localhost:8088/v1/status |
 | Public auction listings | http://localhost:8088/v1/market/auctions |
@@ -109,6 +130,9 @@ node --test tests/*.test.mjs
 docker compose exec -T web npm run build
 TEST_DATABASE_ADMIN_URL=postgres://enclavo:enclavo@localhost:5433/postgres cargo test --manifest-path gateway/Cargo.toml --locked
 ```
+
+The contracts have their own unit and sandbox tests; see [contracts/README.md](contracts/README.md).
+`gateway/tests/chain.rs` covers the mirror against a stand-in NEAR RPC.
 
 Tests cover key ownership/revocation, auction reservations, uniform clearing, partial fills, refunds,
 concurrent budgets, contract consumption through both interfaces, expiry, daily resets, and failed
@@ -262,8 +286,9 @@ Fly account; local manifest parsing is not a substitute for that check.
 The provider advertises TEE capabilities, but Enclavo does not yet verify hardware quotes, TLS
 bindings, or response signatures. It reports verification as unavailable. There are no invented
 benchmark scores or benchmark-normalized cross-model IU conversion; the capacity units are model-specific. Image-specific pricing and encrypted client-to-model transport are not implemented.
-The live preset uses operator-issued credit; public self-service deposits and real on-chain settlement
-are not enabled. Custom x402 templates need separate funded-client validation.
+The off-chain Market uses operator-issued credit; it has no public self-service deposits. On-chain
+settlement exists only on NEAR testnet with a mock token, and the operator is paid at clearing with
+no refund path if capacity is not delivered. Custom x402 templates need separate funded-client validation.
 
 `docker compose down` stops services. Add `-v` only to erase data and dependency volumes. Older `pgdata`
 volumes are retained but are not used by the separated live/test modes.

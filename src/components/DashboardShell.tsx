@@ -12,7 +12,9 @@ import Sidebar from "@/components/Sidebar";
 export default function DashboardShell({ children }: { children: ReactNode }) {
   const { ready, authenticated, login } = usePrivy();
   const pathname = usePathname();
-  const locked = pathname !== "/dashboard/market" && (!ready || !authenticated);
+  // Market is public, and the on-chain market is used with a NEAR wallet rather than a sign-in.
+  const open = pathname === "/dashboard/market" || pathname === "/dashboard/onchain";
+  const locked = !open && (!ready || !authenticated);
 
   return (
     <div className="relative flex min-h-dvh flex-col md:flex-row">

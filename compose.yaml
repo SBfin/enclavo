@@ -33,6 +33,8 @@ services:
       ENCLAVO_CONFIG: ${ENCLAVO_CONFIG:-near-ai}
       DATABASE_URL: postgres://enclavo:enclavo@postgres:5432/enclavo
       RUST_LOG: ${RUST_LOG:-info}
+      # NEAR auction contract to mirror; set it empty in .env to run without the chain.
+      ENCLAVO_AUCTION_CONTRACT: ${ENCLAVO_AUCTION_CONTRACT-enclavo-auction.testnet}
     env_file:
       - path: .env
         required: false

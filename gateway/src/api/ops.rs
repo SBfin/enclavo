@@ -16,6 +16,7 @@ pub async fn status(State(state): State<Shared>) -> Json<serde_json::Value> {
         "routes": state.catalog.routes.len(),
         "funding": if state.cfg.payments.networks.is_empty() { "operator_credit" } else { "x402" },
         "attestation_verification": "not_implemented",
+        "chain": crate::chain::Chain::public_info(),
     }))
 }
 
