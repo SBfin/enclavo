@@ -12,7 +12,11 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{Shared, ledger};
+use crate::{
+    Shared,
+    keeper::{self, Keeper},
+    ledger,
+};
 
 const DEFAULT_RPC_URL: &str = "https://test.rpc.fastnear.com";
 const PAGE: u64 = 100;
@@ -70,17 +74,29 @@ impl Chain {
         &self.contract
     }
 
+    /// One JSON-RPC call; returns its `result`. `timeout` overrides the client's 15 seconds.
+    pub(crate) async fn rpc(&self, method: &str, params: Value, timeout: Option<Duration>) -> anyhow::Result<Value> {
+        let request = json!({"jsonrpc":"2.0","id":"enclavo","method":method,"params":params});
+        let mut call = self.http.post(&self.rpc_url).json(&request);
+        if let Some(timeout) = timeout {
+            call = call.timeout(timeout);
+        }
+        let mut response: Value = call.send().await?.error_for_status()?.json().await?;
+        if let Some(error) = response.get("error") {
+            bail!("NEAR RPC {method} failed: {error}");
+        }
+        Ok(response["result"].take())
+    }
+
     /// Calls a view method against the latest finalized block.
-    async fn view<T: DeserializeOwned>(&self, method: &str, args: Value) -> anyhow::Result<T> {
-        let request = json!({"jsonrpc":"2.0","id":"enclavo","method":"query","params":{
-            "request_type":"call_function","finality":"final","account_id":self.contract,
-            "method_name":method,"args_base64":STANDARD.encode(args.to_string())}});
-        let response: Value =
-            self.http.post(&self.rpc_url).json(&request).send().await?.error_for_status()?.json().await?;
-        if let Some(error) = response.get("error").or_else(|| response["result"].get("error")) {
+    pub(crate) async fn view<T: DeserializeOwned>(&self, method: &str, args: Value) -> anyhow::Result<T> {
+        let params = json!({"request_type":"call_function","finality":"final","account_id":self.contract,
+            "method_name":method,"args_base64":STANDARD.encode(args.to_string())});
+        let result = self.rpc("query", params, None).await?;
+        if let Some(error) = result.get("error") {
             bail!("NEAR view {method} failed: {error}");
         }
-        let bytes: Vec<u8> = serde_json::from_value(response["result"]["result"].clone())
+        let bytes: Vec<u8> = serde_json::from_value(result["result"].clone())
             .with_context(|| format!("NEAR view {method} returned no result"))?;
         serde_json::from_slice(&bytes).with_context(|| format!("NEAR view {method} returned unexpected JSON"))
     }
@@ -211,14 +227,24 @@ async fn sync_keys(db: &PgPool, chain: &Chain) -> anyhow::Result<u64> {
     Ok(changed)
 }
 
-/// Polls the contract until shutdown.
-pub async fn run(state: Shared, chain: Chain) {
+/// Polls the contract until shutdown. With a keeper, first settles auctions past their close so
+/// the same pass imports the entitlements they create.
+pub async fn run(state: Shared, chain: Chain, keeper: Option<Keeper>) {
     tracing::info!(contract = chain.contract(), rpc = chain.rpc_url, "mirroring on-chain auction entitlements");
+    match &keeper {
+        Some(k) => tracing::info!(account = k.account(), key = k.public_key(), "settling auctions when they close"),
+        None => tracing::info!("no keeper key configured; auctions settle only when someone calls clear_auction"),
+    }
     let mut tick = tokio::time::interval(Duration::from_secs(10));
     loop {
         tokio::select! {
             _ = tick.tick() => {}
             _ = state.shutdown.cancelled() => return,
+        }
+        if let Some(keeper) = &keeper
+            && let Err(error) = keeper::settle_due(&state.db, &chain, keeper).await
+        {
+            tracing::error!(%error, "auction settlement pass failed");
         }
         match sync(&state.db, &chain).await {
             Ok((0, 0)) => {}

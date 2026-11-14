@@ -7,6 +7,7 @@ pub mod config;
 pub mod control;
 pub mod devmock;
 pub mod error;
+pub mod keeper;
 pub mod ledger;
 pub mod limits;
 pub mod market;
@@ -150,7 +151,13 @@ pub fn spawn_background(state: Shared) -> Vec<tokio::task::JoinHandle<()>> {
         tasks.push(tokio::spawn(batch::run(state.clone())));
     }
     match chain::Chain::from_env() {
-        Ok(Some(chain)) => tasks.push(tokio::spawn(chain::run(state.clone(), chain))),
+        Ok(Some(chain)) => {
+            let keeper = keeper::Keeper::from_env().unwrap_or_else(|err| {
+                tracing::error!(error = %err, "auction keeper is misconfigured; settling stays manual");
+                None
+            });
+            tasks.push(tokio::spawn(chain::run(state.clone(), chain, keeper)))
+        }
         Ok(None) => {}
         Err(err) => tracing::error!(error = %err, "on-chain auction mirror is misconfigured"),
     }

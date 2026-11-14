@@ -41,7 +41,8 @@ Prices are per IU-day, and a bid escrows `units * term_days * max_price`.
    `{"auction_id":0,"units":8,"max_price":"1000000"}` as `msg`. A rejected bid returns the transfer.
    An empty `msg` only deposits; `place_bid` then bids from that balance.
 3. `cancel_bid` unlocks the escrow any time before the close.
-4. After the close anyone calls `clear_auction`. Bids fill in price/time order at one price: the
+4. After the close anyone calls `clear_auction`; the gateway's keeper does it automatically when
+   configured (see [Settlement keeper](#settlement-keeper)). Bids fill in price/time order at one price: the
    reserve when supply covers demand, otherwise the marginal winning bid. Each fill creates an
    `Entitlement`; unspent escrow is unlocked and proceeds are credited to the operator.
 5. `withdraw` sends unlocked balance back to the wallet.
@@ -49,7 +50,8 @@ Prices are per IU-day, and a bid escrows `units * term_days * max_price`.
 ## Spending won capacity
 
 The gateway mirrors the contract when `ENCLAVO_AUCTION_CONTRACT` is set (`gateway/src/chain.rs`).
-It only makes view calls against finalized blocks, so it holds no chain key.
+It only makes view calls against finalized blocks. The one exception is the optional settlement
+keeper below, which can call `clear_auction` and nothing else.
 
 1. Every entitlement becomes a gateway capacity contract owned by an account tied to the
    winner's NEAR account. No sign-up is involved.
@@ -69,6 +71,43 @@ transaction, and with the NEAR CLI option. Meteor and Nightly are offered by the
 have not been tried.
 
 `scripts/use-capacity.sh` runs the key steps for a testnet buyer against a local gateway.
+
+## Settlement keeper
+
+`clear_auction` is permissionless, but someone has to send it. With a keeper key configured, the
+gateway checks every ten seconds for auctions past their close and sends `clear_auction` for each,
+oldest first, then imports the new entitlements in the same pass. Winners see their capacity in
+`GET /v1/contracts` within about ten seconds of the close.
+
+The key is a NEAR function-call access key, so the chain itself limits what it can do: call
+`clear_auction` on this contract, attach no deposit, and spend at most its gas allowance. Before
+every signing pass the gateway reads the key's permission from the chain and refuses to sign if it
+is a full-access key, names another contract, or allows any other method. If a settlement races a
+manual Settle, the "already cleared" answer is treated as done. With several gateway machines, a
+Postgres advisory lock lets only one send at a time, so they never collide on the key's nonce.
+
+Any funded account can hold the key; the operator account is the simplest. With NEAR CLI
+(`near-cli-rs`), add a key limited to `clear_auction` and print it:
+
+```sh
+near account add-key enclavo-ops.testnet \
+  grant-function-call-access --allowance '1 NEAR' \
+  --contract-account-id enclavo-auction.testnet --function-names clear_auction \
+  autogenerate-new-keypair print-to-terminal \
+  network-config testnet sign-with-keychain send
+```
+
+Each settlement reserves up to 300 TGas (about 0.03 NEAR at testnet gas prices) from the
+allowance, so 1 NEAR covers roughly 30 settlements; add a new key when it runs out. Give the gateway
+the account and the printed secret key, never the account's full-access key:
+
+```sh
+fly secrets set --app enclavo-gateway-staging \
+  ENCLAVO_NEAR_KEEPER_ACCOUNT=enclavo-ops.testnet ENCLAVO_NEAR_KEEPER_KEY='ed25519:...'
+```
+
+Without these the gateway stays read-only and auctions settle when someone presses Settle on
+the market page. Remove the key on chain with `near account delete-keys` to revoke it.
 
 Views: `key_hash_of`, `get_config`, `list_auctions`, `get_auction`, `get_bids`, `bids_of`, `balance_of`,
 `entitlements_of`, `list_entitlements`. Every state change emits an `EVENT_JSON` log

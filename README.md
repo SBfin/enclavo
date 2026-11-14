@@ -56,6 +56,10 @@ two do not share auctions, bids or balances.
   reads finalized contract state every ten seconds and turns entitlements into capacity
   contracts. A wallet authorizes an API key by publishing its SHA-256 hash on chain; the gateway
   then serves that wallet's capacity to the key. No Enclavo account or dashboard sign-in is involved.
+- **Settlement keeper** (`gateway/src/keeper.rs`): optional. Given a NEAR function-call key that can
+  only call `clear_auction`, the gateway settles each auction a few seconds after it closes, so
+  winners get capacity without anyone pressing Settle. Setup is in
+  [contracts/README.md](contracts/README.md#settlement-keeper).
 - **On-chain page** (`/dashboard/onchain`): connect a NEAR wallet, get test mUSDC, bid, cancel,
   settle a closed auction, withdraw, and authorize an API key.
 
