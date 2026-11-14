@@ -257,6 +257,19 @@ impl Contract {
         id
     }
 
+    /// Ends bidding now and settles the auction in the same call, e.g. once it is fully subscribed.
+    pub fn close_auction(&mut self, auction_id: u64) {
+        require!(env::predecessor_account_id() == self.owner, "Only the operator can close an auction early");
+        let now = env::block_timestamp_ms();
+        let auction = self.auctions.get_mut(slot(auction_id)).unwrap_or_else(|| env::panic_str("Auction not found"));
+        require!(auction.status == AuctionStatus::Open, "Auction is already cleared");
+        if now < auction.ends_at_ms {
+            auction.ends_at_ms = now;
+            emit("auction_closed", json!({"auction_id": auction_id, "ends_at_ms": now}));
+        }
+        self.clear_auction(auction_id);
+    }
+
     // ----- funds -----
 
     /// NEP-141 receiver. An empty `msg` credits the sender's balance; a JSON

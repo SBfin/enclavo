@@ -30,6 +30,15 @@ and `prompt_weight_bps` is its input price divided by its output price, in basis
 contract does not know the catalog. The operator key is held by the
 person who deployed the contracts, not stored in this repository.
 
+Close an auction before its end time, for example once it is fully subscribed. Bidding stops and
+the auction settles in the same transaction:
+
+```sh
+near contract call-function as-transaction enclavo-auction.testnet close_auction json-args \
+  '{"auction_id":1}' prepaid-gas '300 Tgas' attached-deposit '0 NEAR' \
+  sign-as enclavo-ops.testnet network-config testnet sign-with-legacy-keychain send
+```
+
 ## How it works
 
 Amounts are the token's atomic units; with 6 decimals that equals the gateway's micro-USD.
